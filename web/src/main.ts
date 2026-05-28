@@ -52,6 +52,28 @@ type GraphPayload = {
 const DISPLAY_Y_COMPRESSION = 0.46;
 const OVERVIEW_LABEL_ZOOM_IN_LIMIT = 0.85;
 const MAX_OVERVIEW_RATIO_MULTIPLIER = 1.18;
+const SELECTION_LABEL_MAX_CHARS = 48;
+const SELECTION_LABEL_PADDING = 8;
+const SELECTION_LABEL_GAP = 10;
+
+type LabelRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+type SelectionLabel = {
+  id: string;
+  attrs: GraphNode;
+  point: { x: number; y: number };
+  radius: number;
+  isSelected: boolean;
+};
+
+type PlacedSelectionLabel = SelectionLabel & {
+  rect: LabelRect;
+};
 
 const app = document.querySelector<HTMLDivElement>("#app");
 
@@ -80,6 +102,10 @@ app.innerHTML = `
         <div><strong id="selected-ancestors">0</strong><span>Transitive imports</span></div>
         <div><strong id="selected-descendants">0</strong><span>Downstream users</span></div>
       </div>
+      <details id="selected-detail-panel" class="detail-disclosure" hidden>
+        <summary>Details</summary>
+        <dl id="selected-detail-list"></dl>
+      </details>
     </section>
     <div class="controls">
       <input id="search" placeholder="Search module" />
@@ -103,6 +129,8 @@ app.innerHTML = `
     <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
     <div id="sigma-container"></div>
     <div id="topic-overlay" class="topic-overlay"></div>
+    <div id="selection-label-overlay" class="selection-label-overlay"></div>
+    <svg id="hover-label-line" class="hover-label-line-layer"></svg>
     <div id="tooltip" class="tooltip" hidden></div>
   </main>
 `;
@@ -122,19 +150,129 @@ function metricSize(node: GraphNode, mode: string): number {
   return node.size;
 }
 
+function nodeTitle(node: GraphNode): string {
+  return node.descriptionTitle || node.label || node.id;
+}
+
+function truncateLabel(value: string, maxChars = SELECTION_LABEL_MAX_CHARS): string {
+  return value.length > maxChars ? `${value.slice(0, maxChars - 3).trimEnd()}...` : value;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function rectsOverlap(a: LabelRect, b: LabelRect, padding = 0): boolean {
+  return !(
+    a.right + padding <= b.left ||
+    a.left - padding >= b.right ||
+    a.bottom + padding <= b.top ||
+    a.top - padding >= b.bottom
+  );
+}
+
+function overlapArea(a: LabelRect, b: LabelRect): number {
+  const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+  const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+  return width * height;
+}
+
+function rectFromCenter(x: number, y: number, radius: number): LabelRect {
+  return { left: x - radius, top: y - radius, right: x + radius, bottom: y + radius };
+}
+
+function placementCandidates(
+  point: { x: number; y: number },
+  width: number,
+  height: number,
+  radius: number,
+  viewportWidth: number,
+  viewportHeight: number
+): LabelRect[] {
+  const step = height + SELECTION_LABEL_GAP;
+  const distances = Array.from({ length: 10 }, (_, index) => radius + SELECTION_LABEL_GAP + index * step);
+  const candidates: LabelRect[] = [];
+  for (const distance of distances) {
+    const raw = [
+      { left: point.x - width / 2, top: point.y - distance - height },
+      { left: point.x - width / 2, top: point.y + distance }
+    ];
+    for (const candidate of raw) {
+      const left = clamp(candidate.left, SELECTION_LABEL_PADDING, Math.max(SELECTION_LABEL_PADDING, viewportWidth - width - SELECTION_LABEL_PADDING));
+      const top = clamp(candidate.top, SELECTION_LABEL_PADDING, Math.max(SELECTION_LABEL_PADDING, viewportHeight - height - SELECTION_LABEL_PADDING));
+      candidates.push({ left, top, right: left + width, bottom: top + height });
+    }
+  }
+  return candidates;
+}
+
+function connectorEndpoint(point: { x: number; y: number }, rect: LabelRect): { x: number; y: number } {
+  return {
+    x: clamp(point.x, rect.left, rect.right),
+    y: rect.bottom <= point.y ? rect.bottom : rect.top
+  };
+}
+
+function chooseLabelPlacement(
+  point: { x: number; y: number },
+  width: number,
+  height: number,
+  radius: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  avoidRects: LabelRect[],
+  occupiedRects: LabelRect[]
+): LabelRect {
+  const candidates = placementCandidates(point, width, height, radius, viewportWidth, viewportHeight);
+  const collisions = [...avoidRects, ...occupiedRects];
+  for (const candidate of candidates) {
+    if (!collisions.some((rect) => rectsOverlap(candidate, rect, 2))) return candidate;
+  }
+  return candidates.reduce((best, candidate) => {
+    const score = collisions.reduce((sum, rect) => sum + overlapArea(candidate, rect), 0);
+    return score < best.score ? { rect: candidate, score } : best;
+  }, { rect: candidates[0], score: Number.POSITIVE_INFINITY }).rect;
+}
+
 function setText(id: string, value: unknown): void {
   const element = document.querySelector<HTMLElement>(`#${id}`);
   if (element) element.textContent = String(value ?? "-");
 }
 
-function escapeHtml(value: unknown): string {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;"
-  }[char] ?? char));
+function detailRows(node: GraphNode): Array<[string, string]> {
+  const rows: Array<[string, string]> = [
+    ["Topic", node.topic],
+    ["Lane", node.namespaceLane || "n/a"],
+    ["Rank", String(node.rank ?? node.depth)],
+    ["Community", String(node.community)],
+    ["Depth", String(node.depth)],
+    ["Dependencies", String(node.nDependencies)],
+    ["Dependents", String(node.nDependents)],
+    ["Transitive imports", String(node.ancestorCount ?? 0)],
+    ["Downstream users", String(node.descendantCount ?? 0)],
+    ["Symbols", String(node.nSymbols)],
+    ["PageRank", node.pagerank.toExponential(3)],
+    ["Betweenness", node.betweenness.toExponential(3)]
+  ];
+  if (node.sourceFile) rows.push(["Source", node.sourceFile]);
+  if (node.sampleSymbols) rows.push(["Examples", node.sampleSymbols]);
+  return rows;
+}
+
+function updateDetailPanel(node: GraphNode | null): void {
+  const panel = document.querySelector<HTMLDetailsElement>("#selected-detail-panel");
+  const list = document.querySelector<HTMLDListElement>("#selected-detail-list");
+  if (!panel || !list) return;
+  list.innerHTML = "";
+  panel.hidden = !node;
+  if (!node) return;
+  for (const [label, value] of detailRows(node)) {
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value;
+    list.append(term, description);
+  }
 }
 
 function colorWithAlpha(hex: string, alpha: number): string {
@@ -146,44 +284,10 @@ function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function showTooltip(node: GraphNode | null): void {
-  const tooltip = document.querySelector<HTMLDivElement>("#tooltip");
-  if (!tooltip) return;
-  if (!node) {
-    tooltip.hidden = true;
-    return;
-  }
-  tooltip.hidden = false;
-  const title = node.descriptionTitle || node.label || node.id;
-  const description = node.description || `Full Mathlib source module in ${node.topic}.`;
-  const sourceFile = node.sourceFile
-    ? `<dt>Source</dt><dd>${escapeHtml(node.sourceFile)}</dd>`
-    : "";
-  tooltip.innerHTML = `
-    <h2>${escapeHtml(node.id)}</h2>
-    <h3>${escapeHtml(title)}</h3>
-    <p>${escapeHtml(description)}</p>
-    <dl>
-      <dt>Topic</dt><dd>${escapeHtml(node.topic)}</dd>
-      <dt>Lane</dt><dd>${escapeHtml(node.namespaceLane || "n/a")}</dd>
-      <dt>Rank</dt><dd>${node.rank ?? node.depth}</dd>
-      <dt>Community</dt><dd>${node.community}</dd>
-      <dt>Depth</dt><dd>${node.depth}</dd>
-      <dt>Dependencies</dt><dd>${node.nDependencies}</dd>
-      <dt>Dependents</dt><dd>${node.nDependents}</dd>
-      <dt>Transitive imports</dt><dd>${node.ancestorCount ?? 0}</dd>
-      <dt>Downstream users</dt><dd>${node.descendantCount ?? 0}</dd>
-      <dt>PageRank</dt><dd>${node.pagerank.toExponential(3)}</dd>
-      <dt>Betweenness</dt><dd>${node.betweenness.toExponential(3)}</dd>
-      ${sourceFile}
-    </dl>
-  `;
-}
-
 function updateSelectedCard(node: GraphNode | null): void {
   const description = document.querySelector<HTMLParagraphElement>("#selected-description");
   const sourceLink = document.querySelector<HTMLAnchorElement>("#selected-source-link");
-  setText("selected-title", node?.descriptionTitle || node?.label || "No module selected");
+  setText("selected-title", node ? nodeTitle(node) : "No module selected");
   setText("selected-module", node?.id || "-");
   if (description) {
     description.textContent = node?.description || "";
@@ -199,6 +303,7 @@ function updateSelectedCard(node: GraphNode | null): void {
   setText("selected-dependents", node?.nDependents ?? 0);
   setText("selected-ancestors", node?.ancestorCount ?? 0);
   setText("selected-descendants", node?.descendantCount ?? 0);
+  updateDetailPanel(node);
 }
 
 function updateEdgeModeInfo(edgeMode: string, selectedNode: string | null, payload: GraphPayload): void {
@@ -296,6 +401,9 @@ loadGraph().then((payload) => {
     maxCameraRatio: MAX_OVERVIEW_RATIO_MULTIPLIER
   });
   const overlay = document.querySelector<HTMLDivElement>("#topic-overlay");
+  const selectionLabelOverlay = document.querySelector<HTMLDivElement>("#selection-label-overlay");
+  const hoverLabelLine = document.querySelector<SVGSVGElement>("#hover-label-line");
+  const hoverLabel = document.querySelector<HTMLDivElement>("#tooltip");
   const rendererAny = renderer as unknown as {
     graphToViewport?: (coordinates: { x: number; y: number }) => { x: number; y: number };
   };
@@ -350,6 +458,159 @@ loadGraph().then((payload) => {
       el.style.color = colorWithAlpha(label.color, 0.94);
       overlay.appendChild(el);
     }
+  };
+
+  const renderSelectionLabels = (): void => {
+    if (!selectionLabelOverlay || !rendererAny.graphToViewport) return;
+    selectionLabelOverlay.innerHTML = "";
+    if (!selectedNode || !graph.hasNode(selectedNode)) return;
+    const labeledIds = [
+      selectedNode,
+      ...(outgoing.get(selectedNode) ?? []),
+      ...(incoming.get(selectedNode) ?? [])
+    ];
+    const labels: SelectionLabel[] = [];
+    for (const nodeId of new Set(labeledIds)) {
+      if (!graph.hasNode(nodeId) || graph.getNodeAttribute(nodeId, "hidden")) continue;
+      const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
+      const point = rendererAny.graphToViewport({ x: attrs.x, y: attrs.y });
+      const size = Number(graph.getNodeAttribute(nodeId, "size") ?? attrs.size ?? 4);
+      labels.push({
+        id: nodeId,
+        attrs,
+        point,
+        radius: Math.max(6, size + 5),
+        isSelected: nodeId === selectedNode
+      });
+    }
+    const avoidRects = labels.map((label) => rectFromCenter(label.point.x, label.point.y, label.radius + 3));
+    const occupiedRects: LabelRect[] = [];
+    const placedLabels: PlacedSelectionLabel[] = [];
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "selection-label-lines");
+    svg.setAttribute("width", String(container.clientWidth));
+    svg.setAttribute("height", String(container.clientHeight));
+    svg.setAttribute("viewBox", `0 0 ${container.clientWidth} ${container.clientHeight}`);
+    selectionLabelOverlay.appendChild(svg);
+    for (const label of labels) {
+      const el = document.createElement("div");
+      el.className = label.isSelected ? "selection-node-label selected" : "selection-node-label";
+      el.textContent = truncateLabel(nodeTitle(label.attrs));
+      el.style.left = "0";
+      el.style.top = "0";
+      el.style.visibility = "hidden";
+      selectionLabelOverlay.appendChild(el);
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      const rect = chooseLabelPlacement(
+        label.point,
+        width,
+        height,
+        label.radius,
+        container.clientWidth,
+        container.clientHeight,
+        avoidRects,
+        occupiedRects
+      );
+      el.style.left = `${rect.left}px`;
+      el.style.top = `${rect.top}px`;
+      el.style.visibility = "";
+      occupiedRects.push(rect);
+      placedLabels.push({ ...label, rect });
+    }
+    for (const label of placedLabels) {
+      const end = connectorEndpoint(label.point, label.rect);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(label.point.x));
+      line.setAttribute("y1", String(label.point.y));
+      line.setAttribute("x2", String(end.x));
+      line.setAttribute("y2", String(end.y));
+      line.setAttribute("class", label.isSelected ? "selection-label-line selected" : "selection-label-line");
+      svg.appendChild(line);
+    }
+  };
+
+  const relatedNodeAvoidRects = (extraNodeId?: string): LabelRect[] => {
+    const rects: LabelRect[] = [];
+    if (!rendererAny.graphToViewport) return rects;
+    const ids = selectedNode && graph.hasNode(selectedNode)
+      ? new Set([
+        selectedNode,
+        ...(outgoing.get(selectedNode) ?? []),
+        ...(incoming.get(selectedNode) ?? [])
+      ])
+      : new Set<string>();
+    if (extraNodeId) ids.add(extraNodeId);
+    for (const nodeId of ids) {
+      if (!graph.hasNode(nodeId)) continue;
+      if (graph.getNodeAttribute(nodeId, "hidden")) continue;
+      const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
+      const point = rendererAny.graphToViewport({ x: attrs.x, y: attrs.y });
+      const radius = Math.max(5, Number(graph.getNodeAttribute(nodeId, "size") ?? attrs.size ?? 4) + 5);
+      if (
+        point.x + radius < 0 ||
+        point.y + radius < 0 ||
+        point.x - radius > container.clientWidth ||
+        point.y - radius > container.clientHeight
+      ) {
+        continue;
+      }
+      rects.push(rectFromCenter(point.x, point.y, radius));
+    }
+    return rects;
+  };
+
+  const selectedDetailNode = (): GraphNode | null => {
+    return selectedNode && graph.hasNode(selectedNode) ? graph.getNodeAttributes(selectedNode) as GraphNode : null;
+  };
+
+  const renderHoverLabel = (nodeId: string | null): void => {
+    if (!hoverLabel || !rendererAny.graphToViewport || !nodeId || !graph.hasNode(nodeId)) {
+      if (hoverLabel) hoverLabel.hidden = true;
+      if (hoverLabelLine) {
+        hoverLabelLine.hidden = true;
+        hoverLabelLine.innerHTML = "";
+      }
+      updateDetailPanel(selectedDetailNode());
+      return;
+    }
+    const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
+    const point = rendererAny.graphToViewport({ x: attrs.x, y: attrs.y });
+    const size = Number(graph.getNodeAttribute(nodeId, "size") ?? attrs.size ?? 4);
+    hoverLabel.textContent = truncateLabel(nodeTitle(attrs));
+    hoverLabel.hidden = false;
+    hoverLabel.style.visibility = "hidden";
+    hoverLabel.style.left = "0";
+    hoverLabel.style.top = "0";
+    const rect = chooseLabelPlacement(
+      point,
+      hoverLabel.offsetWidth,
+      hoverLabel.offsetHeight,
+      Math.max(6, size + 5),
+        container.clientWidth,
+        container.clientHeight,
+        relatedNodeAvoidRects(nodeId),
+        []
+      );
+    hoverLabel.style.left = `${rect.left}px`;
+    hoverLabel.style.top = `${rect.top}px`;
+    hoverLabel.style.visibility = "";
+    if (hoverLabelLine) {
+      const end = connectorEndpoint(point, rect);
+      hoverLabelLine.hidden = false;
+      hoverLabelLine.setAttribute("width", String(container.clientWidth));
+      hoverLabelLine.setAttribute("height", String(container.clientHeight));
+      hoverLabelLine.setAttribute("viewBox", `0 0 ${container.clientWidth} ${container.clientHeight}`);
+      hoverLabelLine.innerHTML = "";
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(point.x));
+      line.setAttribute("y1", String(point.y));
+      line.setAttribute("x2", String(end.x));
+      line.setAttribute("y2", String(end.y));
+      line.setAttribute("class", "hover-label-line");
+      hoverLabelLine.appendChild(line);
+    }
+    updateDetailPanel(attrs);
   };
 
   const applyFilters = (): void => {
@@ -413,6 +674,15 @@ loadGraph().then((payload) => {
     }
     renderer.refresh();
     renderTopicOverlay();
+    renderSelectionLabels();
+    if (hoverLabel && !hoverLabel.hidden) {
+      hoverLabel.hidden = true;
+      if (hoverLabelLine) {
+        hoverLabelLine.hidden = true;
+        hoverLabelLine.innerHTML = "";
+      }
+      updateDetailPanel(selectedDetailNode());
+    }
   };
 
   document.querySelector<HTMLInputElement>("#search")?.addEventListener("input", applyFilters);
@@ -444,11 +714,12 @@ loadGraph().then((payload) => {
     window.setTimeout(() => {
       renderer.resize(true);
       renderTopicOverlay();
+      renderSelectionLabels();
     }, 190);
   });
 
-  renderer.on("enterNode", ({ node }) => showTooltip(graph.getNodeAttributes(node) as GraphNode));
-  renderer.on("leaveNode", () => showTooltip(null));
+  renderer.on("enterNode", ({ node }) => renderHoverLabel(node));
+  renderer.on("leaveNode", () => renderHoverLabel(null));
   renderer.on("clickNode", ({ node }) => {
     selectedNode = node;
     updateSelectedCard(graph.getNodeAttributes(node) as GraphNode);
@@ -459,8 +730,30 @@ loadGraph().then((payload) => {
     updateSelectedCard(null);
     applyFilters();
   });
-  cameraAny.on?.("updated", renderTopicOverlay);
-  window.addEventListener("resize", renderTopicOverlay);
+  cameraAny.on?.("updated", () => {
+    renderTopicOverlay();
+    renderSelectionLabels();
+    if (hoverLabel) {
+      hoverLabel.hidden = true;
+      if (hoverLabelLine) {
+        hoverLabelLine.hidden = true;
+        hoverLabelLine.innerHTML = "";
+      }
+      updateDetailPanel(selectedDetailNode());
+    }
+  });
+  window.addEventListener("resize", () => {
+    renderTopicOverlay();
+    renderSelectionLabels();
+    if (hoverLabel) {
+      hoverLabel.hidden = true;
+      if (hoverLabelLine) {
+        hoverLabelLine.hidden = true;
+        hoverLabelLine.innerHTML = "";
+      }
+      updateDetailPanel(selectedDetailNode());
+    }
+  });
   updateSelectedCard(null);
   applyFilters();
 }).catch((error: unknown) => {

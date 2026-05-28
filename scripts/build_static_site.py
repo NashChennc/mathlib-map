@@ -99,6 +99,26 @@ HTML_TEMPLATE = """<!doctype html>
     .selected-meta div { border-top: 1px solid var(--line); padding-top: 8px; }
     .selected-meta strong { display: block; font-size: 18px; }
     .selected-meta span { color: var(--muted); font-size: 12px; }
+    .detail-disclosure {
+      border-top: 1px solid var(--line);
+      margin-top: 10px;
+      padding-top: 8px;
+    }
+    .detail-disclosure summary {
+      color: #334155;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .detail-disclosure dl {
+      display: grid;
+      grid-template-columns: 118px 1fr;
+      gap: 5px 9px;
+      margin: 9px 0 0;
+      font-size: 12px;
+    }
+    .detail-disclosure dt { color: var(--muted); }
+    .detail-disclosure dd { color: #334155; margin: 0; min-width: 0; overflow-wrap: anywhere; }
     label { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
     input, select, button {
       width: 100%;
@@ -113,22 +133,23 @@ HTML_TEMPLATE = """<!doctype html>
     canvas { width: 100%; height: 100%; display: block; background: #f8fafc; }
     .tooltip {
       position: absolute;
-      right: 18px;
-      top: 18px;
-      width: min(430px, calc(100% - 36px));
+      z-index: 3;
+      max-width: min(220px, 36vw);
+      overflow: hidden;
       background: rgba(255,255,255,.96);
       border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
-      box-shadow: 0 14px 35px rgba(15, 23, 42, .12);
+      border-radius: 6px;
+      padding: 4px 7px;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, .12);
+      color: var(--ink);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.15;
       pointer-events: none;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .tooltip h3 { margin: 0 0 8px; font-size: 15px; word-break: break-word; }
-    .tooltip h4 { margin: 0 0 7px; font-size: 13px; color: #334155; }
-    .tooltip p { margin: 0 0 10px; font-size: 13px; color: #475569; max-height: 115px; overflow: hidden; }
-    .tooltip dl { display: grid; grid-template-columns: 118px 1fr; gap: 5px 10px; margin: 0; font-size: 13px; }
-    .tooltip dt { color: var(--muted); }
-    .tooltip dd { margin: 0; }
     .edge-key { display: grid; gap: 7px; color: var(--muted); font-size: 12px; margin-top: 10px; }
     .edge-key span { display: inline-flex; align-items: center; gap: 7px; }
     .edge-line { width: 30px; height: 3px; border-radius: 999px; display: inline-block; }
@@ -180,6 +201,10 @@ HTML_TEMPLATE = """<!doctype html>
           <div><strong id="selectedAncestors">0</strong><span>Transitive imports</span></div>
           <div><strong id="selectedDescendants">0</strong><span>Downstream users</span></div>
         </div>
+        <details id="selectedDetailPanel" class="detail-disclosure" hidden>
+          <summary>Details</summary>
+          <dl id="selectedDetailList"></dl>
+        </details>
       </section>
       <h2>Controls</h2>
       <label for="search">Search module</label>
@@ -224,6 +249,8 @@ HTML_TEMPLATE = """<!doctype html>
     const selectedModule = document.getElementById('selectedModule');
     const selectedDescription = document.getElementById('selectedDescription');
     const selectedSourceLink = document.getElementById('selectedSourceLink');
+    const selectedDetailPanel = document.getElementById('selectedDetailPanel');
+    const selectedDetailList = document.getElementById('selectedDetailList');
     const selectedDeps = document.getElementById('selectedDeps');
     const selectedDependents = document.getElementById('selectedDependents');
     const selectedAncestors = document.getElementById('selectedAncestors');
@@ -233,6 +260,10 @@ HTML_TEMPLATE = """<!doctype html>
     const FIT_Y_COMPRESSION = 0.46;
     const MIN_ZOOM = 0.82;
     const OVERVIEW_LABEL_ZOOM_LIMIT = 1.18;
+    const SELECTION_LABEL_MAX_CHARS = 48;
+    const SELECTION_LABEL_MAX_WIDTH = 220;
+    const SELECTION_LABEL_PADDING = 8;
+    const SELECTION_LABEL_GAP = 10;
     const byId = new Map(nodes.map(n => [n.id, n]));
     const outgoing = new Map();
     const incoming = new Map();
@@ -290,6 +321,8 @@ HTML_TEMPLATE = """<!doctype html>
     let lastY = 0;
     let visibleNodes = nodes;
     let sidebarCollapsed = false;
+    let hoverLabelRect = null;
+    let hoverLabelPoint = null;
 
     function resize(force = false) {
       const ratio = window.devicePixelRatio || 1;
@@ -354,6 +387,126 @@ HTML_TEMPLATE = """<!doctype html>
       }[char]));
     }
 
+    function nodeTitle(node) {
+      return node.descriptionTitle || node.label || node.id;
+    }
+
+    function detailRows(node) {
+      const rows = [
+        ['Topic', node.topic],
+        ['Lane', node.namespaceLane || 'n/a'],
+        ['Rank', String(node.rank ?? node.depth)],
+        ['Community', String(node.community)],
+        ['Depth', String(node.depth)],
+        ['Dependencies', String(node.nDependencies)],
+        ['Dependents', String(node.nDependents)],
+        ['Transitive imports', String(node.ancestorCount ?? 0)],
+        ['Downstream users', String(node.descendantCount ?? 0)],
+        ['Symbols', String(node.nSymbols)],
+        ['PageRank', node.pagerank.toExponential(3)],
+        ['Betweenness', node.betweenness.toExponential(3)]
+      ];
+      if (node.sourceFile) rows.push(['Source', node.sourceFile]);
+      if (node.sampleSymbols) rows.push(['Examples', node.sampleSymbols]);
+      return rows;
+    }
+
+    function updateDetailPanel(node) {
+      selectedDetailList.innerHTML = '';
+      selectedDetailPanel.hidden = !node;
+      if (!node) return;
+      selectedDetailList.innerHTML = detailRows(node)
+        .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`)
+        .join('');
+    }
+
+    function truncateLabel(value, maxChars = SELECTION_LABEL_MAX_CHARS) {
+      return value.length > maxChars ? `${value.slice(0, maxChars - 3).trimEnd()}...` : value;
+    }
+
+    function fitCanvasLabel(text, maxWidth) {
+      let fitted = truncateLabel(text);
+      while (fitted.length > 6 && ctx.measureText(fitted).width > maxWidth) {
+        fitted = `${fitted.slice(0, -4).trimEnd()}...`;
+      }
+      return fitted;
+    }
+
+    function roundedRect(x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + width - r, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+      ctx.lineTo(x + width, y + height - r);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+      ctx.lineTo(x + r, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function rectsOverlap(a, b, padding = 0) {
+      return !(
+        a.right + padding <= b.left ||
+        a.left - padding >= b.right ||
+        a.bottom + padding <= b.top ||
+        a.top - padding >= b.bottom
+      );
+    }
+
+    function overlapArea(a, b) {
+      const width = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+      const height = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+      return width * height;
+    }
+
+    function rectFromCenter(x, y, radius) {
+      return { left: x - radius, top: y - radius, right: x + radius, bottom: y + radius };
+    }
+
+    function placementCandidates(point, width, height, radius, viewportWidth, viewportHeight) {
+      const step = height + SELECTION_LABEL_GAP;
+      const distances = Array.from({ length: 10 }, (_, index) => radius + SELECTION_LABEL_GAP + index * step);
+      const candidates = [];
+      for (const distance of distances) {
+        const raw = [
+          { left: point.x - width / 2, top: point.y - distance - height },
+          { left: point.x - width / 2, top: point.y + distance }
+        ];
+        for (const candidate of raw) {
+          const left = clamp(candidate.left, SELECTION_LABEL_PADDING, Math.max(SELECTION_LABEL_PADDING, viewportWidth - width - SELECTION_LABEL_PADDING));
+          const top = clamp(candidate.top, SELECTION_LABEL_PADDING, Math.max(SELECTION_LABEL_PADDING, viewportHeight - height - SELECTION_LABEL_PADDING));
+          candidates.push({ left, top, right: left + width, bottom: top + height });
+        }
+      }
+      return candidates;
+    }
+
+    function chooseLabelPlacement(point, width, height, radius, viewportWidth, viewportHeight, avoidRects, occupiedRects) {
+      const candidates = placementCandidates(point, width, height, radius, viewportWidth, viewportHeight);
+      const collisions = [...avoidRects, ...occupiedRects];
+      for (const candidate of candidates) {
+        if (!collisions.some(rect => rectsOverlap(candidate, rect, 2))) return candidate;
+      }
+      return candidates.reduce((best, candidate) => {
+        const score = collisions.reduce((sum, rect) => sum + overlapArea(candidate, rect), 0);
+        return score < best.score ? { rect: candidate, score } : best;
+      }, { rect: candidates[0], score: Number.POSITIVE_INFINITY }).rect;
+    }
+
+    function connectorEndpoint(point, rect) {
+      return {
+        x: clamp(point.x, rect.left, rect.right),
+        y: rect.bottom <= point.y ? rect.bottom : rect.top
+      };
+    }
+
     function collectTransitive(start, map) {
       const seen = new Set();
       const stack = [...(map.get(start) || [])];
@@ -407,9 +560,10 @@ HTML_TEMPLATE = """<!doctype html>
         selectedDependents.textContent = '0';
         selectedAncestors.textContent = '0';
         selectedDescendants.textContent = '0';
+        updateDetailPanel(null);
         return;
       }
-      selectedTitle.textContent = node.descriptionTitle || node.label || node.id;
+      selectedTitle.textContent = nodeTitle(node);
       selectedModule.textContent = node.id;
       selectedDescription.textContent = node.description || `Full Mathlib source module in ${node.topic}.`;
       selectedDescription.hidden = false;
@@ -420,6 +574,7 @@ HTML_TEMPLATE = """<!doctype html>
       selectedDependents.textContent = node.nDependents;
       selectedAncestors.textContent = node.ancestorCount ?? 0;
       selectedDescendants.textContent = node.descendantCount ?? 0;
+      updateDetailPanel(node);
     }
 
     function drawOverviewTopicLabels() {
@@ -463,6 +618,88 @@ HTML_TEMPLATE = """<!doctype html>
       }
       ctx.restore();
       ctx.globalAlpha = 1;
+    }
+
+    function drawDashedConnector(point, rect, selectedLine = false) {
+      const end = connectorEndpoint(point, rect);
+      ctx.save();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = selectedLine ? 'rgba(15, 23, 42, 0.58)' : 'rgba(71, 85, 105, 0.45)';
+      ctx.lineWidth = selectedLine ? 1.2 : 1;
+      ctx.setLineDash([4, 4]);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(point.x, point.y);
+      ctx.lineTo(end.x, end.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawSelectionLabels(visible, sel) {
+      if (!selected) return;
+      const labelIds = new Set([selected, ...sel.directImports, ...sel.directDependents]);
+      const labelHeight = 20;
+      const labels = [];
+      ctx.save();
+      ctx.font = '700 11px Inter, ui-sans-serif, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const id of labelIds) {
+        const node = byId.get(id);
+        if (!node || !visible.has(id)) continue;
+        const p = project(node);
+        const r = Math.max(2, metricSize(node) * Math.sqrt(Math.min(scaleX, scaleY)) * 0.5);
+        const text = fitCanvasLabel(nodeTitle(node), SELECTION_LABEL_MAX_WIDTH - 14);
+        const labelWidth = Math.min(SELECTION_LABEL_MAX_WIDTH, ctx.measureText(text).width + 14);
+        labels.push({ id, node, point: p, radius: Math.max(6, r + 5), text, labelWidth });
+      }
+      const avoidRects = labels.map(label => rectFromCenter(label.point.x, label.point.y, label.radius + 3));
+      const occupiedRects = [];
+      const placedLabels = [];
+      for (const label of labels) {
+        const rect = chooseLabelPlacement(
+          label.point,
+          label.labelWidth,
+          labelHeight,
+          label.radius,
+          canvas.clientWidth,
+          canvas.clientHeight,
+          avoidRects,
+          occupiedRects
+        );
+        placedLabels.push({ ...label, rect });
+        occupiedRects.push(rect);
+      }
+      for (const label of placedLabels) {
+        drawDashedConnector(label.point, label.rect, label.id === selected);
+      }
+      for (const label of placedLabels) {
+        const rect = label.rect;
+        const x = rect.left + label.labelWidth / 2;
+        const y = rect.top + labelHeight / 2;
+        ctx.globalAlpha = 1;
+        ctx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+        ctx.shadowBlur = label.id === selected ? 14 : 10;
+        ctx.shadowOffsetY = 4;
+        roundedRect(rect.left, rect.top, label.labelWidth, labelHeight, 6);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+        ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.lineWidth = label.id === selected ? 1.2 : 1;
+        ctx.strokeStyle = label.id === selected ? 'rgba(15, 23, 42, 0.45)' : 'rgba(203, 213, 225, 0.95)';
+        ctx.stroke();
+        ctx.fillStyle = '#0f172a';
+        ctx.fillText(label.text, x, y + 0.5);
+      }
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    function drawHoverConnector() {
+      if (!hoverLabelRect || !hoverLabelPoint || tooltip.hidden) return;
+      ctx.save();
+      drawDashedConnector(hoverLabelPoint, hoverLabelRect, false);
+      ctx.restore();
     }
 
     function draw() {
@@ -531,6 +768,8 @@ HTML_TEMPLATE = """<!doctype html>
         }
       }
       ctx.globalAlpha = 1;
+      drawSelectionLabels(visible, sel);
+      drawHoverConnector();
       drawOverviewTopicLabels();
     }
 
@@ -548,36 +787,53 @@ HTML_TEMPLATE = """<!doctype html>
       return best;
     }
 
+    function relatedNodeAvoidRects(extraNode) {
+      const rects = [];
+      const ids = selected ? new Set([selected, ...(outgoing.get(selected) || []), ...(incoming.get(selected) || [])]) : new Set();
+      if (extraNode) ids.add(extraNode.id);
+      for (const id of ids) {
+        const node = byId.get(id);
+        if (!node || !passesFilters(node)) continue;
+        const p = project(node);
+        const r = Math.max(2, metricSize(node) * Math.sqrt(Math.min(scaleX, scaleY)) * 0.5);
+        const radius = Math.max(5, r + 5);
+        if (p.x + radius < 0 || p.y + radius < 0 || p.x - radius > canvas.clientWidth || p.y - radius > canvas.clientHeight) continue;
+        rects.push(rectFromCenter(p.x, p.y, radius));
+      }
+      return rects;
+    }
+
     function showTooltip(node) {
       if (!node) {
         tooltip.hidden = true;
+        hoverLabelRect = null;
+        hoverLabelPoint = null;
+        updateDetailPanel(selected ? byId.get(selected) : null);
         return;
       }
+      const p = project(node);
+      const r = Math.max(2, metricSize(node) * Math.sqrt(Math.min(scaleX, scaleY)) * 0.5);
       tooltip.hidden = false;
-      const title = node.descriptionTitle || node.label || node.id;
-      const description = node.description || `Full Mathlib source module in ${node.topic}.`;
-      const sourceFile = node.sourceFile
-        ? `<dt>Source</dt><dd>${escapeHtml(node.sourceFile)}</dd>`
-        : '';
-      tooltip.innerHTML = `<h3>${escapeHtml(node.id)}</h3>
-        <h4>${escapeHtml(title)}</h4>
-        <p>${escapeHtml(description)}</p>
-        <dl>
-          <dt>Topic</dt><dd>${escapeHtml(node.topic)}</dd>
-          <dt>Lane</dt><dd>${escapeHtml(node.namespaceLane || 'n/a')}</dd>
-          <dt>Rank</dt><dd>${escapeHtml(node.rank ?? node.depth)}</dd>
-          <dt>Community</dt><dd>${escapeHtml(node.community)}</dd>
-          <dt>Depth</dt><dd>${escapeHtml(node.depth)}</dd>
-          <dt>Dependencies</dt><dd>${escapeHtml(node.nDependencies)}</dd>
-          <dt>Dependents</dt><dd>${escapeHtml(node.nDependents)}</dd>
-          <dt>Transitive imports</dt><dd>${escapeHtml(node.ancestorCount ?? 0)}</dd>
-          <dt>Downstream users</dt><dd>${escapeHtml(node.descendantCount ?? 0)}</dd>
-          <dt>Symbols</dt><dd>${escapeHtml(node.nSymbols)}</dd>
-          <dt>PageRank</dt><dd>${node.pagerank.toExponential(3)}</dd>
-          <dt>Betweenness</dt><dd>${node.betweenness.toExponential(3)}</dd>
-          ${sourceFile}
-          <dt>Examples</dt><dd>${escapeHtml(node.sampleSymbols || 'n/a')}</dd>
-        </dl>`;
+      tooltip.style.visibility = 'hidden';
+      tooltip.style.left = '0';
+      tooltip.style.top = '0';
+      tooltip.textContent = truncateLabel(nodeTitle(node));
+      const rect = chooseLabelPlacement(
+        p,
+        tooltip.offsetWidth,
+        tooltip.offsetHeight,
+        Math.max(6, r + 5),
+        canvas.clientWidth,
+        canvas.clientHeight,
+        relatedNodeAvoidRects(node),
+        []
+      );
+      tooltip.style.left = `${rect.left}px`;
+      tooltip.style.top = `${rect.top}px`;
+      tooltip.style.visibility = '';
+      hoverLabelRect = rect;
+      hoverLabelPoint = p;
+      updateDetailPanel(node);
     }
 
     canvas.addEventListener('mousemove', event => {
@@ -626,6 +882,8 @@ HTML_TEMPLATE = """<!doctype html>
     topicSelect.addEventListener('change', updateVisible);
     resetButton.addEventListener('click', () => {
       selected = null;
+      hovered = null;
+      showTooltip(null);
       search.value = '';
       topicSelect.value = '';
       zoom = 1;
@@ -644,7 +902,11 @@ HTML_TEMPLATE = """<!doctype html>
       sidebarToggle.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
       sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
       sidebarToggle.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
-      window.setTimeout(() => resize(true), 190);
+      tooltip.hidden = true;
+      window.setTimeout(() => {
+        resize(true);
+        updateDetailPanel(selected ? byId.get(selected) : null);
+      }, 190);
     }
     sidebarToggle.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
     window.addEventListener('resize', resize);
