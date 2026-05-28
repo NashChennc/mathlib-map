@@ -119,6 +119,26 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .detail-disclosure dt { color: var(--muted); }
     .detail-disclosure dd { color: #334155; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+    .neighbor-lists { display: grid; gap: 8px; margin-top: 10px; }
+    .neighbor-disclosure { border-top: 1px solid #e2e8f0; padding-top: 8px; }
+    .neighbor-disclosure summary { color: #475569; font-size: 12px; font-weight: 700; }
+    .neighbor-list { display: grid; gap: 5px; max-height: 180px; margin-top: 7px; overflow-y: auto; padding-right: 2px; }
+    .neighbor-link {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ink);
+      cursor: pointer;
+      display: grid;
+      gap: 2px;
+      margin: 0;
+      padding: 7px 8px;
+      text-align: left;
+      width: 100%;
+    }
+    .neighbor-link:hover, .neighbor-link:focus-visible { background: #eff6ff; border-color: #93c5fd; outline: none; }
+    .neighbor-title { font-size: 12px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+    .neighbor-id { color: var(--muted); font-size: 11px; line-height: 1.2; overflow-wrap: anywhere; }
     label { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
     input, select, button {
       width: 100%;
@@ -204,6 +224,7 @@ HTML_TEMPLATE = """<!doctype html>
         <details id="selectedDetailPanel" class="detail-disclosure" hidden>
           <summary>Details</summary>
           <dl id="selectedDetailList"></dl>
+          <div id="selectedNeighborLists" class="neighbor-lists"></div>
         </details>
       </section>
       <h2>Controls</h2>
@@ -251,6 +272,7 @@ HTML_TEMPLATE = """<!doctype html>
     const selectedSourceLink = document.getElementById('selectedSourceLink');
     const selectedDetailPanel = document.getElementById('selectedDetailPanel');
     const selectedDetailList = document.getElementById('selectedDetailList');
+    const selectedNeighborLists = document.getElementById('selectedNeighborLists');
     const selectedDeps = document.getElementById('selectedDeps');
     const selectedDependents = document.getElementById('selectedDependents');
     const selectedAncestors = document.getElementById('selectedAncestors');
@@ -391,6 +413,10 @@ HTML_TEMPLATE = """<!doctype html>
       return node.descriptionTitle || node.label || node.id;
     }
 
+    function nodeSearchHaystack(node) {
+      return `${node.id} ${node.label} ${node.sampleSymbols || ''} ${node.descriptionTitle || ''} ${node.description || ''} ${node.sourceFile || ''}`.toLowerCase();
+    }
+
     function detailRows(node) {
       const rows = [
         ['Topic', node.topic],
@@ -413,11 +439,53 @@ HTML_TEMPLATE = """<!doctype html>
 
     function updateDetailPanel(node) {
       selectedDetailList.innerHTML = '';
+      selectedNeighborLists.innerHTML = '';
       selectedDetailPanel.hidden = !node;
       if (!node) return;
       selectedDetailList.innerHTML = detailRows(node)
         .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`)
         .join('');
+      renderNeighborLists(node);
+    }
+
+    function sortedNeighborNodes(nodeId, map) {
+      return [...(map.get(nodeId) || [])]
+        .map(id => byId.get(id))
+        .filter(Boolean)
+        .sort((a, b) => nodeTitle(a).localeCompare(nodeTitle(b), undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id));
+    }
+
+    function renderNeighborSection(title, neighbors) {
+      if (!neighbors.length) return;
+      const section = document.createElement('details');
+      section.className = 'neighbor-disclosure';
+      section.open = true;
+      const summary = document.createElement('summary');
+      summary.textContent = `${title} (${neighbors.length})`;
+      const list = document.createElement('div');
+      list.className = 'neighbor-list';
+      for (const neighbor of neighbors) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'neighbor-link';
+        button.title = neighbor.id;
+        button.addEventListener('click', () => selectNodeById(neighbor.id, { focus: true }));
+        const label = document.createElement('span');
+        label.className = 'neighbor-title';
+        label.textContent = nodeTitle(neighbor);
+        const id = document.createElement('span');
+        id.className = 'neighbor-id';
+        id.textContent = neighbor.id;
+        button.append(label, id);
+        list.appendChild(button);
+      }
+      section.append(summary, list);
+      selectedNeighborLists.appendChild(section);
+    }
+
+    function renderNeighborLists(node) {
+      renderNeighborSection('Direct imports', sortedNeighborNodes(node.id, outgoing));
+      renderNeighborSection('Direct dependents', sortedNeighborNodes(node.id, incoming));
     }
 
     function truncateLabel(value, maxChars = SELECTION_LABEL_MAX_CHARS) {
@@ -537,7 +605,7 @@ HTML_TEMPLATE = """<!doctype html>
       const q = search.value.trim().toLowerCase();
       const topic = topicSelect.value;
       if (topic && node.topic !== topic) return false;
-      const haystack = `${node.id} ${node.label} ${node.sampleSymbols || ''} ${node.descriptionTitle || ''} ${node.description || ''} ${node.sourceFile || ''}`.toLowerCase();
+      const haystack = nodeSearchHaystack(node);
       if (q && !haystack.includes(q)) return false;
       return true;
     }
@@ -575,6 +643,33 @@ HTML_TEMPLATE = """<!doctype html>
       selectedAncestors.textContent = node.ancestorCount ?? 0;
       selectedDescendants.textContent = node.descendantCount ?? 0;
       updateDetailPanel(node);
+    }
+
+    function revealNodeIfFiltered(node) {
+      const q = search.value.trim().toLowerCase();
+      if (q && !nodeSearchHaystack(node).includes(q)) search.value = '';
+      if (topicSelect.value && node.topic !== topicSelect.value) topicSelect.value = '';
+    }
+
+    function focusNode(node) {
+      const point = project(node);
+      panX += (canvas.clientWidth || 1) / 2 - point.x;
+      panY += (canvas.clientHeight || 1) / 2 - point.y;
+    }
+
+    function selectNodeById(nodeId, options = {}) {
+      const node = byId.get(nodeId);
+      if (!node) return;
+      selected = node.id;
+      hovered = null;
+      tooltip.hidden = true;
+      hoverLabelRect = null;
+      hoverLabelPoint = null;
+      if (options.reveal !== false) revealNodeIfFiltered(node);
+      visibleNodes = nodes.filter(passesFilters);
+      updateSelectedCard(node);
+      if (options.focus) focusNode(node);
+      draw();
     }
 
     function drawOverviewTopicLabels() {
@@ -858,9 +953,13 @@ HTML_TEMPLATE = """<!doctype html>
     window.addEventListener('mouseup', () => { dragging = false; });
     canvas.addEventListener('click', event => {
       const node = nearestNode(event.offsetX, event.offsetY);
-      selected = node ? node.id : null;
-      showTooltip(node);
-      updateSelectedCard(node);
+      if (node) {
+        selectNodeById(node.id, { focus: false, reveal: false });
+        return;
+      }
+      selected = null;
+      showTooltip(null);
+      updateSelectedCard(null);
       draw();
     });
     canvas.addEventListener('wheel', event => {

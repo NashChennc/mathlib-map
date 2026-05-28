@@ -105,6 +105,7 @@ app.innerHTML = `
       <details id="selected-detail-panel" class="detail-disclosure" hidden>
         <summary>Details</summary>
         <dl id="selected-detail-list"></dl>
+        <div id="selected-neighbor-lists" class="neighbor-lists"></div>
       </details>
     </section>
     <div class="controls">
@@ -152,6 +153,10 @@ function metricSize(node: GraphNode, mode: string): number {
 
 function nodeTitle(node: GraphNode): string {
   return node.descriptionTitle || node.label || node.id;
+}
+
+function nodeSearchHaystack(node: GraphNode): string {
+  return `${node.id} ${node.label} ${node.sampleSymbols || ""} ${node.descriptionTitle || ""} ${node.description || ""} ${node.sourceFile || ""}`.toLowerCase();
 }
 
 function truncateLabel(value: string, maxChars = SELECTION_LABEL_MAX_CHARS): string {
@@ -262,8 +267,10 @@ function detailRows(node: GraphNode): Array<[string, string]> {
 function updateDetailPanel(node: GraphNode | null): void {
   const panel = document.querySelector<HTMLDetailsElement>("#selected-detail-panel");
   const list = document.querySelector<HTMLDListElement>("#selected-detail-list");
+  const neighbors = document.querySelector<HTMLDivElement>("#selected-neighbor-lists");
   if (!panel || !list) return;
   list.innerHTML = "";
+  if (neighbors) neighbors.innerHTML = "";
   panel.hidden = !node;
   if (!node) return;
   for (const [label, value] of detailRows(node)) {
@@ -284,7 +291,10 @@ function colorWithAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-function updateSelectedCard(node: GraphNode | null): void {
+function updateSelectedCard(
+  node: GraphNode | null,
+  renderDetails: (node: GraphNode | null) => void = updateDetailPanel
+): void {
   const description = document.querySelector<HTMLParagraphElement>("#selected-description");
   const sourceLink = document.querySelector<HTMLAnchorElement>("#selected-source-link");
   setText("selected-title", node ? nodeTitle(node) : "No module selected");
@@ -303,7 +313,7 @@ function updateSelectedCard(node: GraphNode | null): void {
   setText("selected-dependents", node?.nDependents ?? 0);
   setText("selected-ancestors", node?.ancestorCount ?? 0);
   setText("selected-descendants", node?.descendantCount ?? 0);
-  updateDetailPanel(node);
+  renderDetails(node);
 }
 
 function updateEdgeModeInfo(edgeMode: string, selectedNode: string | null, payload: GraphPayload): void {
@@ -406,17 +416,95 @@ loadGraph().then((payload) => {
   const hoverLabel = document.querySelector<HTMLDivElement>("#tooltip");
   const rendererAny = renderer as unknown as {
     graphToViewport?: (coordinates: { x: number; y: number }) => { x: number; y: number };
+    viewportToFramedGraph?: (coordinates: { x: number; y: number }) => { x: number; y: number };
   };
   const cameraAny = renderer.getCamera() as unknown as {
     getState?: () => { ratio?: number };
     maxRatio?: number | null;
     on?: (event: string, callback: () => void) => void;
+    animate?: (
+      state: { x?: number; y?: number; ratio?: number },
+      options?: { duration?: number; easing?: string }
+    ) => Promise<void>;
   };
   const initialRatio = Number(cameraAny.getState?.().ratio ?? 1);
   cameraAny.maxRatio = initialRatio * MAX_OVERVIEW_RATIO_MULTIPLIER;
 
   let selectedNode: string | null = null;
   let sidebarCollapsed = false;
+
+  const sortedNeighborNodes = (nodeId: string, map: Map<string, Set<string>>): GraphNode[] => {
+    return [...(map.get(nodeId) ?? [])]
+      .filter((id) => graph.hasNode(id))
+      .map((id) => graph.getNodeAttributes(id) as GraphNode)
+      .sort((a, b) => nodeTitle(a).localeCompare(nodeTitle(b), undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id));
+  };
+
+  const renderNeighborSection = (
+    containerElement: HTMLElement,
+    title: string,
+    neighbors: GraphNode[]
+  ): void => {
+    if (!neighbors.length) return;
+    const section = document.createElement("details");
+    section.className = "neighbor-disclosure";
+    section.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = `${title} (${neighbors.length})`;
+    const list = document.createElement("div");
+    list.className = "neighbor-list";
+    for (const neighbor of neighbors) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "neighbor-link";
+      button.title = neighbor.id;
+      button.addEventListener("click", () => selectNodeById(neighbor.id, { focus: true }));
+      const label = document.createElement("span");
+      label.className = "neighbor-title";
+      label.textContent = nodeTitle(neighbor);
+      const id = document.createElement("span");
+      id.className = "neighbor-id";
+      id.textContent = neighbor.id;
+      button.append(label, id);
+      list.appendChild(button);
+    }
+    section.append(summary, list);
+    containerElement.appendChild(section);
+  };
+
+  const updateDetailPanelWithNeighbors = (node: GraphNode | null): void => {
+    updateDetailPanel(node);
+    const containerElement = document.querySelector<HTMLDivElement>("#selected-neighbor-lists");
+    if (!node || !containerElement) return;
+    renderNeighborSection(containerElement, "Direct imports", sortedNeighborNodes(node.id, outgoing));
+    renderNeighborSection(containerElement, "Direct dependents", sortedNeighborNodes(node.id, incoming));
+  };
+
+  const revealNodeIfFiltered = (node: GraphNode): void => {
+    const search = document.querySelector<HTMLInputElement>("#search");
+    const query = search?.value.trim().toLowerCase() ?? "";
+    if (query && !nodeSearchHaystack(node).includes(query) && search) search.value = "";
+    if (topicSelect?.value && node.topic !== topicSelect.value) topicSelect.value = "";
+  };
+
+  const focusNode = (nodeId: string): void => {
+    if (!graph.hasNode(nodeId) || !rendererAny.graphToViewport || !rendererAny.viewportToFramedGraph || !cameraAny.animate) return;
+    const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
+    const viewportPoint = rendererAny.graphToViewport({ x: attrs.x, y: attrs.y });
+    const target = rendererAny.viewportToFramedGraph(viewportPoint);
+    const ratio = Number(cameraAny.getState?.().ratio ?? initialRatio);
+    void cameraAny.animate({ x: target.x, y: target.y, ratio }, { duration: 420, easing: "quadraticInOut" });
+  };
+
+  function selectNodeById(nodeId: string, options: { focus?: boolean; reveal?: boolean } = {}): void {
+    if (!graph.hasNode(nodeId)) return;
+    const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
+    selectedNode = nodeId;
+    if (options.reveal !== false) revealNodeIfFiltered(attrs);
+    updateSelectedCard(attrs, updateDetailPanelWithNeighbors);
+    applyFilters();
+    if (options.focus) focusNode(nodeId);
+  }
 
   const renderTopicOverlay = (): void => {
     if (!overlay || !rendererAny.graphToViewport) return;
@@ -571,7 +659,7 @@ loadGraph().then((payload) => {
         hoverLabelLine.hidden = true;
         hoverLabelLine.innerHTML = "";
       }
-      updateDetailPanel(selectedDetailNode());
+      updateDetailPanelWithNeighbors(selectedDetailNode());
       return;
     }
     const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
@@ -610,10 +698,10 @@ loadGraph().then((payload) => {
       line.setAttribute("class", "hover-label-line");
       hoverLabelLine.appendChild(line);
     }
-    updateDetailPanel(attrs);
+    updateDetailPanelWithNeighbors(attrs);
   };
 
-  const applyFilters = (): void => {
+  function applyFilters(): void {
     const query = document.querySelector<HTMLInputElement>("#search")?.value.trim().toLowerCase() ?? "";
     const topic = topicSelect?.value ?? "";
     const edgeMode = edgeModeSelect?.value ?? "structural";
@@ -625,7 +713,7 @@ loadGraph().then((payload) => {
     updateEdgeModeInfo(edgeMode, selectedNode, payload);
     for (const nodeId of graph.nodes()) {
       const attrs = graph.getNodeAttributes(nodeId) as GraphNode & { baseColor: string };
-      const haystack = `${nodeId} ${attrs.label} ${attrs.sampleSymbols || ""} ${attrs.descriptionTitle || ""} ${attrs.description || ""} ${attrs.sourceFile || ""}`.toLowerCase();
+      const haystack = nodeSearchHaystack(attrs);
       const hidden = Boolean(topic && attrs.topic !== topic) || Boolean(query && !haystack.includes(query));
       graph.setNodeAttribute(nodeId, "hidden", hidden);
       graph.setNodeAttribute(nodeId, "size", metricSize(attrs, sizeMode));
@@ -681,9 +769,9 @@ loadGraph().then((payload) => {
         hoverLabelLine.hidden = true;
         hoverLabelLine.innerHTML = "";
       }
-      updateDetailPanel(selectedDetailNode());
+      updateDetailPanelWithNeighbors(selectedDetailNode());
     }
-  };
+  }
 
   document.querySelector<HTMLInputElement>("#search")?.addEventListener("input", applyFilters);
   topicSelect?.addEventListener("change", applyFilters);
@@ -697,7 +785,7 @@ loadGraph().then((payload) => {
     if (edgeModeSelect) edgeModeSelect.value = "structural";
     if (sizeMode) sizeMode.value = "influence";
     selectedNode = null;
-    updateSelectedCard(null);
+    updateSelectedCard(null, updateDetailPanelWithNeighbors);
     applyFilters();
     renderer.getCamera().animatedReset();
   });
@@ -721,13 +809,11 @@ loadGraph().then((payload) => {
   renderer.on("enterNode", ({ node }) => renderHoverLabel(node));
   renderer.on("leaveNode", () => renderHoverLabel(null));
   renderer.on("clickNode", ({ node }) => {
-    selectedNode = node;
-    updateSelectedCard(graph.getNodeAttributes(node) as GraphNode);
-    applyFilters();
+    selectNodeById(node, { focus: false, reveal: false });
   });
   renderer.on("clickStage", () => {
     selectedNode = null;
-    updateSelectedCard(null);
+    updateSelectedCard(null, updateDetailPanelWithNeighbors);
     applyFilters();
   });
   cameraAny.on?.("updated", () => {
@@ -739,7 +825,7 @@ loadGraph().then((payload) => {
         hoverLabelLine.hidden = true;
         hoverLabelLine.innerHTML = "";
       }
-      updateDetailPanel(selectedDetailNode());
+      updateDetailPanelWithNeighbors(selectedDetailNode());
     }
   });
   window.addEventListener("resize", () => {
@@ -751,10 +837,10 @@ loadGraph().then((payload) => {
         hoverLabelLine.hidden = true;
         hoverLabelLine.innerHTML = "";
       }
-      updateDetailPanel(selectedDetailNode());
+      updateDetailPanelWithNeighbors(selectedDetailNode());
     }
   });
-  updateSelectedCard(null);
+  updateSelectedCard(null, updateDetailPanelWithNeighbors);
   applyFilters();
 }).catch((error: unknown) => {
   app.innerHTML = `<pre>${String(error)}</pre>`;
