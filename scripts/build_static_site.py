@@ -80,6 +80,8 @@ HTML_TEMPLATE = """<!doctype html>
       width: auto;
       margin-top: 0;
       align-self: stretch;
+      height: 40px;
+      box-sizing: border-box;
     }
     .topbar button {
       width: auto;
@@ -90,7 +92,28 @@ HTML_TEMPLATE = """<!doctype html>
       min-width: 120px;
       max-width: 320px;
     }
-    .topbar select { min-width: 100px; }
+    .topbar select {
+      min-width: 100px;
+      appearance: none;
+      padding-right: 28px;
+    }
+    .select-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+    .select-wrap::after {
+      content: '';
+      position: absolute;
+      right: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 6px solid var(--muted);
+      pointer-events: none;
+    }
     .topbar-label {
       display: inline;
       margin: 0;
@@ -124,10 +147,6 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .source-link:hover { background: #eff6ff; }
     .source-link[hidden] { display: none; }
-    .selected-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
-    .selected-meta div { border-top: 1px solid var(--line); padding-top: 8px; }
-    .selected-meta strong { display: block; font-size: 18px; }
-    .selected-meta span { color: var(--muted); font-size: 12px; }
     .detail-disclosure {
       border-top: 1px solid var(--line);
       margin-top: 10px;
@@ -142,9 +161,45 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .detail-disclosure dt { color: var(--muted); }
     .detail-disclosure dd { color: #334155; margin: 0; min-width: 0; overflow-wrap: anywhere; }
-    .neighbor-lists { display: grid; gap: 8px; margin-top: 10px; }
-    .neighbor-disclosure { border-top: 1px solid #e2e8f0; padding-top: 8px; }
-    .neighbor-disclosure summary { color: #475569; font-size: 12px; font-weight: 700; }
+    .neighbor-lists { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+    .neighbor-disclosure {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .neighbor-disclosure summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #334155;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      list-style: none;
+    }
+    .neighbor-disclosure summary::-webkit-details-marker { display: none; }
+    .neighbor-disclosure summary::after {
+      content: '▸';
+      font-size: 20px;
+      color: var(--muted);
+      transition: transform 140ms ease;
+    }
+    .neighbor-disclosure[open] summary::after {
+      transform: rotate(90deg);
+    }
+    .neighbor-disclosure summary strong {
+      display: block;
+      font-size: 20px;
+      color: var(--ink);
+    }
+    .neighbor-disclosure summary > div {
+      display: flex;
+      flex-direction: column;
+    }
+    .neighbor-disclosure summary span {
+      color: var(--muted);
+      font-size: 12px;
+    }
     .neighbor-list { display: grid; gap: 5px; max-height: 180px; margin-top: 7px; overflow-y: auto; padding-right: 2px; }
     .neighbor-link {
       background: #fff;
@@ -167,7 +222,7 @@ HTML_TEMPLATE = """<!doctype html>
       border: 1px solid var(--line);
       background: #fff;
       color: var(--ink);
-      border-radius: 8px;
+      border-radius: 12px;
       padding: 10px 11px;
       font: inherit;
     }
@@ -246,14 +301,8 @@ HTML_TEMPLATE = """<!doctype html>
         <div id="selectedModule" class="module-id">-</div>
         <p id="selectedDescription" hidden></p>
         <a id="selectedSourceLink" class="source-link" hidden>Open Lean file</a>
-        <div class="selected-meta">
-          <div><strong id="selectedDeps">0</strong><span>Direct imports</span></div>
-          <div><strong id="selectedDependents">0</strong><span>Direct dependents</span></div>
-          <div><strong id="selectedAncestors">0</strong><span>Transitive imports</span></div>
-          <div><strong id="selectedDescendants">0</strong><span>Downstream users</span></div>
-        </div>
+        <div id="selectedNeighborLists" class="neighbor-lists"></div>
         <div id="selectedDetailPanel" class="detail-disclosure" hidden>
-          <div id="selectedNeighborLists" class="neighbor-lists"></div>
           <dl id="selectedDetailList"></dl>
         </div>
       </section>
@@ -263,7 +312,7 @@ HTML_TEMPLATE = """<!doctype html>
         <label for="search" class="topbar-label">Search</label>
         <input id="search" type="text" placeholder="Algebra, Topology, Measure..." aria-label="Search module" />
         <label for="topic" class="topbar-label">Topic</label>
-        <select id="topic" aria-label="Filter by topic"><option value="">All topics</option></select>
+        <span class="select-wrap"><select id="topic" aria-label="Filter by topic"><option value="">All topics</option></select></span>
       </div>
       <canvas id="graph"></canvas>
       <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
@@ -303,10 +352,6 @@ HTML_TEMPLATE = """<!doctype html>
     const selectedDetailPanel = document.getElementById('selectedDetailPanel');
     const selectedDetailList = document.getElementById('selectedDetailList');
     const selectedNeighborLists = document.getElementById('selectedNeighborLists');
-    const selectedDeps = document.getElementById('selectedDeps');
-    const selectedDependents = document.getElementById('selectedDependents');
-    const selectedAncestors = document.getElementById('selectedAncestors');
-    const selectedDescendants = document.getElementById('selectedDescendants');
     const nodes = graph.nodes;
     const edges = graph.edges;
     const FIT_Y_COMPRESSION = 0.46;
@@ -492,7 +537,7 @@ HTML_TEMPLATE = """<!doctype html>
       section.className = 'neighbor-disclosure';
       section.open = false;
       const summary = document.createElement('summary');
-      summary.textContent = `${title} (${neighbors.length})`;
+      summary.innerHTML = `<div><strong>${neighbors.length}</strong><span>${title}</span></div>`;
       const list = document.createElement('div');
       list.className = 'neighbor-list';
       for (const neighbor of neighbors) {
@@ -655,10 +700,6 @@ HTML_TEMPLATE = """<!doctype html>
         selectedSourceLink.hidden = true;
         selectedSourceLink.removeAttribute('href');
         selectedSourceLink.title = 'Open Lean file';
-        selectedDeps.textContent = '0';
-        selectedDependents.textContent = '0';
-        selectedAncestors.textContent = '0';
-        selectedDescendants.textContent = '0';
         updateDetailPanel(null);
         return;
       }
@@ -669,10 +710,6 @@ HTML_TEMPLATE = """<!doctype html>
       selectedSourceLink.hidden = !node.sourceUri;
       selectedSourceLink.href = node.sourceUri || '';
       selectedSourceLink.title = node.sourceFile ? `Open ${node.sourceFile}` : 'Open Lean file';
-      selectedDeps.textContent = node.nDependencies;
-      selectedDependents.textContent = node.nDependents;
-      selectedAncestors.textContent = node.ancestorCount ?? 0;
-      selectedDescendants.textContent = node.descendantCount ?? 0;
       updateDetailPanel(node);
     }
 
