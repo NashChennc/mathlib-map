@@ -12,6 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="data/processed")
     parser.add_argument("--docs-dir", default="docs")
+    parser.add_argument("--config", default="web/config.json")
     return parser.parse_args()
 
 
@@ -115,7 +116,6 @@ HTML_TEMPLATE = """<!doctype html>
     .edge-key { display: grid; gap: 7px; color: var(--muted); font-size: 12px; margin-top: 10px; }
     .edge-key span { display: inline-flex; align-items: center; gap: 7px; }
     .edge-line { width: 30px; height: 3px; border-radius: 999px; display: inline-block; }
-    .mode-note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
     .legend { display: flex; flex-wrap: wrap; gap: 7px; }
     .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; }
     .swatch { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
@@ -169,20 +169,6 @@ HTML_TEMPLATE = """<!doctype html>
       <input id="search" placeholder="Algebra, Topology, Measure..." />
       <label for="topic">Topic</label>
       <select id="topic"><option value="">All topics</option></select>
-      <label for="edgeMode">Edges</label>
-      <select id="edgeMode">
-        <option value="structural">Structure edges</option>
-        <option value="raw">Raw imports</option>
-        <option value="selected">Selected only</option>
-      </select>
-      <p id="edgeModeInfo" class="mode-note">Showing the transitive-reduction backbone.</p>
-      <label for="mode">Node size</label>
-      <select id="mode">
-        <option value="size">Downstream influence</option>
-        <option value="pagerank">PageRank influence</option>
-        <option value="betweenness">Betweenness bridge score</option>
-        <option value="symbols">Symbol count</option>
-      </select>
       <button id="reset">Reset view</button>
       <h2>Legend</h2>
       <div id="legend" class="legend"></div>
@@ -205,17 +191,16 @@ HTML_TEMPLATE = """<!doctype html>
     </main>
   </div>
   <script id="graph-data" type="application/json">__GRAPH_JSON__</script>
+  <script id="app-config" type="application/json">__APP_CONFIG__</script>
   <script>
     const graph = JSON.parse(document.getElementById('graph-data').textContent);
+    const appConfig = JSON.parse(document.getElementById('app-config').textContent);
     const appRoot = document.querySelector('.app');
     const canvas = document.getElementById('graph');
     const ctx = canvas.getContext('2d');
     const tooltip = document.getElementById('tooltip');
     const search = document.getElementById('search');
     const topicSelect = document.getElementById('topic');
-    const edgeModeSelect = document.getElementById('edgeMode');
-    const edgeModeInfo = document.getElementById('edgeModeInfo');
-    const modeSelect = document.getElementById('mode');
     const resetButton = document.getElementById('reset');
     const sidebarToggle = document.getElementById('sidebarToggle');
     const selectedTitle = document.getElementById('selectedTitle');
@@ -325,7 +310,7 @@ HTML_TEMPLATE = """<!doctype html>
     }
 
     function metricSize(node) {
-      const mode = modeSelect.value;
+      const mode = appConfig.nodeSizeMode || 'size';
       if (mode === 'pagerank') return 2.5 + Math.sqrt(Math.max(0, node.pagerank)) * 80;
       if (mode === 'betweenness') return 3 + Math.sqrt(Math.max(0, node.betweenness)) * 80;
       if (mode === 'symbols') return 3 + Math.sqrt(Math.max(0, node.nSymbols)) * 1.8;
@@ -339,19 +324,6 @@ HTML_TEMPLATE = """<!doctype html>
       const g = parseInt(full.slice(2, 4), 16);
       const b = parseInt(full.slice(4, 6), 16);
       return `rgba(${r || 100}, ${g || 116}, ${b || 139}, ${alpha})`;
-    }
-
-    function updateEdgeModeInfo() {
-      const mode = edgeModeSelect.value;
-      const rawCount = graph.summary.raw_edge_count ?? edges.length;
-      const structuralCount = graph.summary.structural_edge_count ?? edges.filter(e => e.isStructural).length;
-      if (mode === 'raw') {
-        edgeModeInfo.textContent = `Showing all ${rawCount} source import edges.`;
-      } else if (mode === 'selected') {
-        edgeModeInfo.textContent = selected ? 'Showing selected-module dependency flow.' : 'Select a module to show its dependency flow.';
-      } else {
-        edgeModeInfo.textContent = `Showing ${structuralCount} structural edges; ${rawCount - structuralCount} redundant raw edges are hidden.`;
-      }
     }
 
     function escapeHtml(value) {
@@ -414,7 +386,6 @@ HTML_TEMPLATE = """<!doctype html>
         selectedDependents.textContent = '0';
         selectedAncestors.textContent = '0';
         selectedDescendants.textContent = '0';
-        updateEdgeModeInfo();
         return;
       }
       selectedTitle.textContent = node.descriptionTitle || node.label || node.id;
@@ -425,7 +396,6 @@ HTML_TEMPLATE = """<!doctype html>
       selectedDependents.textContent = node.nDependents;
       selectedAncestors.textContent = node.ancestorCount ?? 0;
       selectedDescendants.textContent = node.descendantCount ?? 0;
-      updateEdgeModeInfo();
     }
 
     function drawOverviewTopicLabels() {
@@ -477,7 +447,7 @@ HTML_TEMPLATE = """<!doctype html>
       ctx.clearRect(0, 0, w, h);
       const visible = new Set(visibleNodes.map(n => n.id));
       const sel = selectionSets();
-      const edgeMode = edgeModeSelect.value;
+      const edgeMode = appConfig.edgeMode || 'structural';
 
       for (const edge of edges) {
         if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
@@ -626,13 +596,10 @@ HTML_TEMPLATE = """<!doctype html>
     }, { passive: false });
     search.addEventListener('input', updateVisible);
     topicSelect.addEventListener('change', updateVisible);
-    edgeModeSelect.addEventListener('change', () => { updateEdgeModeInfo(); draw(); });
-    modeSelect.addEventListener('change', draw);
     resetButton.addEventListener('click', () => {
       selected = null;
       search.value = '';
       topicSelect.value = '';
-      edgeModeSelect.value = 'structural';
       zoom = 1;
       scaleX = 1;
       scaleY = 1;
@@ -654,7 +621,6 @@ HTML_TEMPLATE = """<!doctype html>
     sidebarToggle.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
     window.addEventListener('resize', resize);
     updateSelectedCard(null);
-    updateEdgeModeInfo();
     resize();
   </script>
 </body>
@@ -666,12 +632,15 @@ def main() -> None:
     args = parse_args()
     data_dir = Path(args.data_dir)
     docs_dir = Path(args.docs_dir)
+    config_path = Path(args.config)
     docs_dir.mkdir(parents=True, exist_ok=True)
     graph_text = (data_dir / "graph.json").read_text(encoding="utf-8")
     graph = json.loads(graph_text)
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     compact = json.dumps(graph, ensure_ascii=False, separators=(",", ":"))
     script_safe = compact.replace("<", "\\u003c").replace("</script", "<\\/script")
-    html_text = HTML_TEMPLATE.replace("__GRAPH_JSON__", script_safe)
+    config_json = json.dumps(config, ensure_ascii=False)
+    html_text = HTML_TEMPLATE.replace("__GRAPH_JSON__", script_safe).replace("__APP_CONFIG__", config_json)
     (docs_dir / "index.html").write_text(html_text, encoding="utf-8")
     (docs_dir / "graph.json").write_text(json.dumps(graph, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Built static visualization: {docs_dir / 'index.html'}")

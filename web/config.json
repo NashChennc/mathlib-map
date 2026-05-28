@@ -1,0 +1,5 @@
+{
+  "_comment": "edgeMode: structural | raw | selected  —  nodeSizeMode: size | pagerank | betweenness | symbols",
+  "edgeMode": "structural",
+  "nodeSizeMode": "size"
+}
