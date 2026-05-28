@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
 import pandas as pd
@@ -69,6 +70,10 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("descriptionTitle", graph["nodes"][0])
             self.assertIn("description", graph["nodes"][0])
             self.assertIn("hasDescription", graph["nodes"][0])
+            self.assertIn("sourceFile", graph["nodes"][0])
+            self.assertIn("sourceUri", graph["nodes"][0])
+            self.assertTrue(all(node["sourceFile"] == "" for node in graph["nodes"]))
+            self.assertTrue(all(node["sourceUri"] == "" for node in graph["nodes"]))
             self.assertIn("rank", graph["nodes"][0])
             self.assertIn("ancestorCount", graph["nodes"][0])
             self.assertIn("descendantCount", graph["nodes"][0])
@@ -87,6 +92,34 @@ class PipelineTests(unittest.TestCase):
             coords_one = {node["id"]: (node["x"], node["y"]) for node in graph["nodes"]}
             coords_two = {node["id"]: (node["x"], node["y"]) for node in graph_two["nodes"]}
             self.assertEqual(coords_one, coords_two)
+
+    def test_build_graph_artifacts_adds_local_source_links(self) -> None:
+        rows = pd.DataFrame(
+            [
+                {
+                    "fact": "a",
+                    "type": "module",
+                    "library": "Data",
+                    "imports": ["Mathlib.Init"],
+                    "filename": "Mathlib/Data/A.lean",
+                    "symbolic_name": "Mathlib.Data.A",
+                    "docstring": "A",
+                },
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            rows.attrs["mathlib_source_dir"] = str(Path(tmp) / "math lib")
+            out = Path(tmp) / "out"
+            build_graph_artifacts(rows, out, "unit")
+            graph = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+            by_id = {node["id"]: node for node in graph["nodes"]}
+            source_node = by_id["Mathlib.Data.A"]
+            source_path = (Path(tmp) / "math lib" / "Mathlib/Data/A.lean").resolve()
+            expected_uri = "vscode://file" + urllib.parse.quote(source_path.as_posix(), safe="/")
+            self.assertEqual(source_node["sourceFile"], "Mathlib/Data/A.lean")
+            self.assertEqual(source_node["sourceUri"], expected_uri)
+            self.assertEqual(by_id["Mathlib.Init"]["sourceFile"], "")
+            self.assertEqual(by_id["Mathlib.Init"]["sourceUri"], "")
 
 
 class SourceParserTests(unittest.TestCase):
@@ -160,6 +193,10 @@ import Mathlib.Init
             root = Path(tmp)
             module_dir = root / "Mathlib" / "Data"
             module_dir.mkdir(parents=True)
+            (root / ".mathlib_source_ref").write_text(
+                "mathlib_source_dir=data/raw/mathlib4\nmathlib_source_ref=test-ref\n",
+                encoding="utf-8",
+            )
             (module_dir / "A.lean").write_text("import Mathlib.Init\n", encoding="utf-8")
             (module_dir / "B.lean").write_text(
                 "/-!\n# Module B\n\nThis module documents a small test fixture.\n-/\nimport Mathlib.Data.A\nimport Std.Data.HashMap\n",
@@ -171,6 +208,8 @@ import Mathlib.Init
             self.assertEqual(row["imports"], ["Mathlib.Data.A"])
             self.assertEqual(row["description_title"], "Module B")
             self.assertTrue(row["has_description"])
+            self.assertEqual(records.attrs["mathlib_source_dir"], str(root.resolve()))
+            self.assertEqual(records.attrs["mathlib_source_ref"], "test-ref")
 
 
 if __name__ == "__main__":

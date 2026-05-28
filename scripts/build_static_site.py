@@ -79,6 +79,22 @@ HTML_TEMPLATE = """<!doctype html>
     .selection-card h3 { margin: 0 0 5px; font-size: 14px; word-break: break-word; }
     .selection-card .module-id { margin: 0 0 9px; color: var(--muted); font-size: 12px; word-break: break-word; }
     .selection-card p { margin: 0; font-size: 13px; color: #334155; }
+    .source-link {
+      align-items: center;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      color: #1d4ed8;
+      display: inline-flex;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.2;
+      margin-top: 10px;
+      max-width: 100%;
+      padding: 8px 10px;
+      text-decoration: none;
+    }
+    .source-link:hover { background: #eff6ff; }
+    .source-link[hidden] { display: none; }
     .selected-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     .selected-meta div { border-top: 1px solid var(--line); padding-top: 8px; }
     .selected-meta strong { display: block; font-size: 18px; }
@@ -157,6 +173,7 @@ HTML_TEMPLATE = """<!doctype html>
         <h3 id="selectedTitle">No module selected</h3>
         <div id="selectedModule" class="module-id">-</div>
         <p id="selectedDescription" hidden></p>
+        <a id="selectedSourceLink" class="source-link" hidden>Open Lean file</a>
         <div class="selected-meta">
           <div><strong id="selectedDeps">0</strong><span>Direct imports</span></div>
           <div><strong id="selectedDependents">0</strong><span>Direct dependents</span></div>
@@ -206,6 +223,7 @@ HTML_TEMPLATE = """<!doctype html>
     const selectedTitle = document.getElementById('selectedTitle');
     const selectedModule = document.getElementById('selectedModule');
     const selectedDescription = document.getElementById('selectedDescription');
+    const selectedSourceLink = document.getElementById('selectedSourceLink');
     const selectedDeps = document.getElementById('selectedDeps');
     const selectedDependents = document.getElementById('selectedDependents');
     const selectedAncestors = document.getElementById('selectedAncestors');
@@ -366,7 +384,7 @@ HTML_TEMPLATE = """<!doctype html>
       const q = search.value.trim().toLowerCase();
       const topic = topicSelect.value;
       if (topic && node.topic !== topic) return false;
-      const haystack = `${node.id} ${node.label} ${node.sampleSymbols || ''} ${node.descriptionTitle || ''} ${node.description || ''}`.toLowerCase();
+      const haystack = `${node.id} ${node.label} ${node.sampleSymbols || ''} ${node.descriptionTitle || ''} ${node.description || ''} ${node.sourceFile || ''}`.toLowerCase();
       if (q && !haystack.includes(q)) return false;
       return true;
     }
@@ -382,6 +400,9 @@ HTML_TEMPLATE = """<!doctype html>
         selectedModule.textContent = '-';
         selectedDescription.textContent = '';
         selectedDescription.hidden = true;
+        selectedSourceLink.hidden = true;
+        selectedSourceLink.removeAttribute('href');
+        selectedSourceLink.title = 'Open Lean file';
         selectedDeps.textContent = '0';
         selectedDependents.textContent = '0';
         selectedAncestors.textContent = '0';
@@ -392,6 +413,9 @@ HTML_TEMPLATE = """<!doctype html>
       selectedModule.textContent = node.id;
       selectedDescription.textContent = node.description || `Full Mathlib source module in ${node.topic}.`;
       selectedDescription.hidden = false;
+      selectedSourceLink.hidden = !node.sourceUri;
+      selectedSourceLink.href = node.sourceUri || '';
+      selectedSourceLink.title = node.sourceFile ? `Open ${node.sourceFile}` : 'Open Lean file';
       selectedDeps.textContent = node.nDependencies;
       selectedDependents.textContent = node.nDependents;
       selectedAncestors.textContent = node.ancestorCount ?? 0;
@@ -532,6 +556,9 @@ HTML_TEMPLATE = """<!doctype html>
       tooltip.hidden = false;
       const title = node.descriptionTitle || node.label || node.id;
       const description = node.description || `Full Mathlib source module in ${node.topic}.`;
+      const sourceFile = node.sourceFile
+        ? `<dt>Source</dt><dd>${escapeHtml(node.sourceFile)}</dd>`
+        : '';
       tooltip.innerHTML = `<h3>${escapeHtml(node.id)}</h3>
         <h4>${escapeHtml(title)}</h4>
         <p>${escapeHtml(description)}</p>
@@ -548,6 +575,7 @@ HTML_TEMPLATE = """<!doctype html>
           <dt>Symbols</dt><dd>${escapeHtml(node.nSymbols)}</dd>
           <dt>PageRank</dt><dd>${node.pagerank.toExponential(3)}</dd>
           <dt>Betweenness</dt><dd>${node.betweenness.toExponential(3)}</dd>
+          ${sourceFile}
           <dt>Examples</dt><dd>${escapeHtml(node.sampleSymbols || 'n/a')}</dd>
         </dl>`;
     }

@@ -50,6 +50,11 @@ make data DATA_SOURCE=mathlib-source
 make web
 ```
 
+When built from the local Mathlib source snapshot, selected modules include an
+`Open Lean file` link that opens the corresponding `.lean` file through VS Code's
+`vscode://file/...` deep link. The generated `graph.json` therefore contains
+local absolute paths for this data source.
+
 To use the Hugging Face dataset when network access is available:
 
 ```bash
@@ -134,5 +139,5 @@ The stable generated files are:
 
 - `nodes.csv`: one module per row, with centrality, community, depth, layout, and topic fields.
 - `edges.csv`: one import relation per row, `source imports target`.
-- `graph.json`: frontend-ready graph payload.
+- `graph.json`: frontend-ready graph payload; local Mathlib source builds also include `sourceFile` and `sourceUri` on nodes.
 - `metrics.json`: counts, validation checks, and top analytic results.

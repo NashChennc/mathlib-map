@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import urllib.parse
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from hashlib import blake2b
@@ -491,7 +492,16 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
 
 def _graph_json(nodes: pd.DataFrame, edges: pd.DataFrame, metrics: dict[str, Any], source_name: str) -> dict[str, Any]:
     node_payload = []
+    source_root = _safe_str(metrics.get("mathlib_source_dir"))
+    resolved_source_root = Path(source_root).expanduser().resolve() if source_root else None
     for row in nodes.itertuples(index=False):
+        source_file = ""
+        source_uri = ""
+        filename = _safe_str(row.filename)
+        if resolved_source_root and filename and not bool(row.is_import_only):
+            source_file = filename
+            source_path = resolved_source_root / filename
+            source_uri = "vscode://file" + urllib.parse.quote(source_path.as_posix(), safe="/")
         node_payload.append(
             {
                 "id": row.id,
@@ -523,6 +533,8 @@ def _graph_json(nodes: pd.DataFrame, edges: pd.DataFrame, metrics: dict[str, Any
                 "descriptionTitle": row.description_title,
                 "description": row.description,
                 "hasDescription": bool(row.has_description),
+                "sourceFile": source_file,
+                "sourceUri": source_uri,
             }
         )
     edge_payload = [

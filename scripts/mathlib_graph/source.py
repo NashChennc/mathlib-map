@@ -226,7 +226,7 @@ def source_metadata(source_root: Path) -> dict[str, str]:
             if "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            if key in metadata:
+            if key in metadata and key != "mathlib_source_dir":
                 metadata[key] = value
     return metadata
 

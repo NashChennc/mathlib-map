@@ -129,6 +129,29 @@ body {
   margin: 0;
 }
 
+.source-link {
+  align-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1d4ed8;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-top: 10px;
+  max-width: 100%;
+  padding: 8px 10px;
+  text-decoration: none;
+}
+
+.source-link:hover {
+  background: #eff6ff;
+}
+
+.source-link[hidden] {
+  display: none;
+}
+
 .selected-meta {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -30,6 +30,8 @@ type GraphNode = {
   descriptionTitle: string;
   description: string;
   hasDescription: boolean;
+  sourceFile: string;
+  sourceUri: string;
 };
 
 type GraphEdge = {
@@ -71,6 +73,7 @@ app.innerHTML = `
       <h2 id="selected-title">No module selected</h2>
       <div id="selected-module" class="module-id">-</div>
       <p id="selected-description" hidden></p>
+      <a id="selected-source-link" class="source-link" hidden>Open Lean file</a>
       <div class="selected-meta">
         <div><strong id="selected-deps">0</strong><span>Direct imports</span></div>
         <div><strong id="selected-dependents">0</strong><span>Direct dependents</span></div>
@@ -153,6 +156,9 @@ function showTooltip(node: GraphNode | null): void {
   tooltip.hidden = false;
   const title = node.descriptionTitle || node.label || node.id;
   const description = node.description || `Full Mathlib source module in ${node.topic}.`;
+  const sourceFile = node.sourceFile
+    ? `<dt>Source</dt><dd>${escapeHtml(node.sourceFile)}</dd>`
+    : "";
   tooltip.innerHTML = `
     <h2>${escapeHtml(node.id)}</h2>
     <h3>${escapeHtml(title)}</h3>
@@ -169,17 +175,25 @@ function showTooltip(node: GraphNode | null): void {
       <dt>Downstream users</dt><dd>${node.descendantCount ?? 0}</dd>
       <dt>PageRank</dt><dd>${node.pagerank.toExponential(3)}</dd>
       <dt>Betweenness</dt><dd>${node.betweenness.toExponential(3)}</dd>
+      ${sourceFile}
     </dl>
   `;
 }
 
 function updateSelectedCard(node: GraphNode | null): void {
   const description = document.querySelector<HTMLParagraphElement>("#selected-description");
+  const sourceLink = document.querySelector<HTMLAnchorElement>("#selected-source-link");
   setText("selected-title", node?.descriptionTitle || node?.label || "No module selected");
   setText("selected-module", node?.id || "-");
   if (description) {
     description.textContent = node?.description || "";
     description.hidden = !node;
+  }
+  if (sourceLink) {
+    const sourceUri = node?.sourceUri || "";
+    sourceLink.hidden = !sourceUri;
+    sourceLink.href = sourceUri;
+    sourceLink.title = node?.sourceFile ? `Open ${node.sourceFile}` : "Open Lean file";
   }
   setText("selected-deps", node?.nDependencies ?? 0);
   setText("selected-dependents", node?.nDependents ?? 0);
@@ -350,7 +364,7 @@ loadGraph().then((payload) => {
     updateEdgeModeInfo(edgeMode, selectedNode, payload);
     for (const nodeId of graph.nodes()) {
       const attrs = graph.getNodeAttributes(nodeId) as GraphNode & { baseColor: string };
-      const haystack = `${nodeId} ${attrs.label} ${attrs.sampleSymbols || ""} ${attrs.descriptionTitle || ""} ${attrs.description || ""}`.toLowerCase();
+      const haystack = `${nodeId} ${attrs.label} ${attrs.sampleSymbols || ""} ${attrs.descriptionTitle || ""} ${attrs.description || ""} ${attrs.sourceFile || ""}`.toLowerCase();
       const hidden = Boolean(topic && attrs.topic !== topic) || Boolean(query && !haystack.includes(query));
       graph.setNodeAttribute(nodeId, "hidden", hidden);
       graph.setNodeAttribute(nodeId, "size", metricSize(attrs, sizeMode));
