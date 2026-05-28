@@ -136,12 +136,6 @@ HTML_TEMPLATE = """<!doctype html>
       margin-top: 10px;
       padding-top: 8px;
     }
-    .detail-disclosure summary {
-      color: #334155;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 700;
-    }
     .detail-disclosure dl {
       display: grid;
       grid-template-columns: 118px 1fr;
@@ -243,7 +237,6 @@ HTML_TEMPLATE = """<!doctype html>
   <div class="app">
     <aside>
       <h1>Mathlib Network Explorer</h1>
-      <h2>Selected</h2>
       <section id="selectionCard" class="selection-card">
         <h3 id="selectedTitle">No module selected</h3>
         <div id="selectedModule" class="module-id">-</div>
@@ -255,11 +248,10 @@ HTML_TEMPLATE = """<!doctype html>
           <div><strong id="selectedAncestors">0</strong><span>Transitive imports</span></div>
           <div><strong id="selectedDescendants">0</strong><span>Downstream users</span></div>
         </div>
-        <details id="selectedDetailPanel" class="detail-disclosure" hidden>
-          <summary>Details</summary>
-          <dl id="selectedDetailList"></dl>
+        <div id="selectedDetailPanel" class="detail-disclosure" hidden>
           <div id="selectedNeighborLists" class="neighbor-lists"></div>
-        </details>
+          <dl id="selectedDetailList"></dl>
+        </div>
       </section>
       <h2>Legend</h2>
       <div id="legend" class="legend"></div>
@@ -493,7 +485,7 @@ HTML_TEMPLATE = """<!doctype html>
       if (!neighbors.length) return;
       const section = document.createElement('details');
       section.className = 'neighbor-disclosure';
-      section.open = true;
+      section.open = false;
       const summary = document.createElement('summary');
       summary.textContent = `${title} (${neighbors.length})`;
       const list = document.createElement('div');
@@ -937,7 +929,6 @@ HTML_TEMPLATE = """<!doctype html>
         tooltip.hidden = true;
         hoverLabelRect = null;
         hoverLabelPoint = null;
-        updateDetailPanel(selected ? byId.get(selected) : null);
         return;
       }
       const p = project(node);
@@ -962,7 +953,6 @@ HTML_TEMPLATE = """<!doctype html>
       tooltip.style.visibility = '';
       hoverLabelRect = rect;
       hoverLabelPoint = p;
-      updateDetailPanel(node);
     }
 
     canvas.addEventListener('mousemove', event => {
