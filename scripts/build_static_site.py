@@ -102,10 +102,7 @@ HTML_TEMPLATE = """<!doctype html>
     h2 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; letter-spacing: 0.04em; }
     p { line-height: 1.48; color: var(--muted); }
     .selection-card {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #f8fafc;
-      padding: 12px;
+      padding: 12px 0;
       margin-top: 10px;
     }
     .selection-card h3 { margin: 0 0 5px; font-size: 14px; word-break: break-word; }
@@ -195,11 +192,18 @@ HTML_TEMPLATE = """<!doctype html>
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .graph-legend {
+      position: absolute;
+      left: 14px;
+      bottom: 54px;
+      z-index: 2;
+      pointer-events: none;
+    }
     .edge-key { display: grid; gap: 7px; color: var(--muted); font-size: 12px; margin-top: 10px; }
     .edge-key span { display: inline-flex; align-items: center; gap: 7px; }
     .edge-line { width: 30px; height: 3px; border-radius: 999px; display: inline-block; }
     .legend { display: flex; flex-wrap: wrap; gap: 7px; }
-    .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; background: rgba(255, 255, 255, 0.88); }
     .swatch { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
     .stats-bar { position: absolute; left: 18px; right: 18px; bottom: 16px; color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; white-space: nowrap; }
     .stats-bar strong { color: var(--ink); }
@@ -253,12 +257,6 @@ HTML_TEMPLATE = """<!doctype html>
           <dl id="selectedDetailList"></dl>
         </div>
       </section>
-      <h2>Legend</h2>
-      <div id="legend" class="legend"></div>
-      <div class="edge-key">
-        <span><i class="edge-line" style="background:#2563eb"></i>Direct imports from selected module</span>
-        <span><i class="edge-line" style="background:#16a34a"></i>Modules that import the selected module</span>
-      </div>
     </aside>
     <main>
       <div class="topbar">
@@ -270,6 +268,13 @@ HTML_TEMPLATE = """<!doctype html>
       <canvas id="graph"></canvas>
       <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
       <div id="tooltip" class="tooltip" hidden></div>
+      <div class="graph-legend">
+        <div id="legend" class="legend"></div>
+        <div class="edge-key">
+          <span><i class="edge-line" style="background:#2563eb"></i>Direct imports from selected module</span>
+          <span><i class="edge-line" style="background:#16a34a"></i>Modules that import the selected module</span>
+        </div>
+      </div>
       <div class="stats-bar">
         <strong id="nodeCount">0</strong> Modules ·
         <strong id="edgeCount">0</strong> Imports ·
