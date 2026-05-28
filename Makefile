@@ -1,5 +1,5 @@
 PYTHON ?= python3
-DATA_SOURCE ?= sample
+DATA_SOURCE ?= mathlib-source
 RAW_INPUT ?=
 PROCESSED_DIR ?= data/processed
 HF_ROW_LIMIT ?= 0
@@ -26,7 +26,7 @@ web-vite:
 	cp -R web/dist/. docs/
 
 test:
-	$(PYTHON) -m unittest discover -s tests
+	DATA_SOURCE=sample $(PYTHON) -m unittest discover -s tests
 
 clean:
 	rm -rf data/processed/* docs/index.html docs/graph.json docs/assets web/dist
