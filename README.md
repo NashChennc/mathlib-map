@@ -40,31 +40,28 @@ This uses `data/sample/lean4_mathlib_sample.jsonl` and produces:
 - `data/processed/edges.csv`
 - `data/processed/graph.json`
 - `data/processed/metrics.json`
-- `figures/*.png`
 - `docs/index.html`
-- `report/mathlib-network-report.pdf`
-- `outputs/mathlib-network-demo.mp4`
 
 Run the full Mathlib module import network:
 
 ```bash
 make mathlib-source
 make data DATA_SOURCE=mathlib-source
-make analyze web report video
+make web
 ```
 
 To use the Hugging Face dataset when network access is available:
 
 ```bash
 make data DATA_SOURCE=hf
-make analyze web report video
+make web
 ```
 
 For a faster real-data smoke test, cap the Dataset Viewer fallback:
 
 ```bash
 make data DATA_SOURCE=hf HF_ROW_LIMIT=1000
-make analyze web report video
+make web
 ```
 
 The current local `pyarrow` build may fail to read Hugging Face's generated
@@ -111,14 +108,13 @@ Lie group node search and local neighborhood exploration.
 
 ## Project Layout
 
-- `scripts/`: data extraction, analysis, figure, report, and video builders
+- `scripts/`: data extraction and graph pipeline
 - `scripts/mathlib_graph/`: reusable graph pipeline package
 - `web/`: TypeScript + Vite + Sigma.js/Graphology frontend scaffold
 - `docs/`: static deliverable and project notes
 - `data/sample/`: offline fixture
 - `data/raw/`: [leanprover-community/mathlib4](https://github.com/leanprover-community/mathlib4) source snapshot
 - `data/processed/`: generated graph data
-- `figures/`, `report/`, `outputs/`: submission artifacts
 - `tests/`: offline unit tests
 
 ## Main Commands
@@ -126,11 +122,8 @@ Lie group node search and local neighborhood exploration.
 ```bash
 make mathlib-source # Download a mathlib4 source snapshot
 make data           # Build nodes.csv, edges.csv, graph.json, metrics.json
-make analyze        # Build result figures
 make web            # Build static interactive page in docs/index.html
 make web-vite       # Build the long-term Vite/Sigma frontend when npm deps are available
-make report         # Build the Chinese PDF report
-make video          # Build the short MP4 demo
 make test           # Run offline tests
 make all            # Full artifact pipeline
 ```

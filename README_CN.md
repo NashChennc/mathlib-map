@@ -37,31 +37,28 @@ make all
 - `data/processed/edges.csv`
 - `data/processed/graph.json`
 - `data/processed/metrics.json`
-- `figures/*.png`
 - `docs/index.html`
-- `report/mathlib-network-report.pdf`
-- `outputs/mathlib-network-demo.mp4`
 
 运行完整的 Mathlib 模块导入网络：
 
 ```bash
 make mathlib-source
 make data DATA_SOURCE=mathlib-source
-make analyze web report video
+make web
 ```
 
 有网络时使用 Hugging Face 数据集：
 
 ```bash
 make data DATA_SOURCE=hf
-make analyze web report video
+make web
 ```
 
 更快的真实数据冒烟测试，限制 Dataset Viewer 回退行数：
 
 ```bash
 make data DATA_SOURCE=hf HF_ROW_LIMIT=1000
-make analyze web report video
+make web
 ```
 
 当前本地 `pyarrow` 构建可能在读取 Hugging Face 生成的 Parquet 分片时出现
@@ -101,14 +98,13 @@ Lie 群节点搜索与局部邻域探索。
 
 ## 项目结构
 
-- `scripts/`：数据提取、分析、图表、报告和视频构建脚本
+- `scripts/`：数据提取和图管线脚本
 - `scripts/mathlib_graph/`：可复用的图管线包
 - `web/`：TypeScript + Vite + Sigma.js/Graphology 前端脚手架
 - `docs/`：静态交付物和项目笔记
 - `data/sample/`：离线 fixture
 - `data/raw/`：[leanprover-community/mathlib4](https://github.com/leanprover-community/mathlib4) 仓库源码
 - `data/processed/`：生成的图数据
-- `figures/`、`report/`、`outputs/`：产出物
 - `tests/`：离线单元测试
 
 ## 主要命令
@@ -116,11 +112,8 @@ Lie 群节点搜索与局部邻域探索。
 ```bash
 make mathlib-source # 下载 mathlib4 源码快照
 make data           # 构建 nodes.csv、edges.csv、graph.json、metrics.json
-make analyze        # 生成结果图表
 make web            # 构建 docs/index.html 静态交互页面
 make web-vite       # 构建 Vite/Sigma 前端（需 npm 依赖）
-make report         # 构建中文 PDF 报告
-make video          # 生成 MP4 演示短片
 make test           # 运行离线测试
 make all            # 完整产出管线
 ```
