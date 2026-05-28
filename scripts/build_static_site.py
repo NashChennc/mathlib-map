@@ -68,10 +68,6 @@ HTML_TEMPLATE = """<!doctype html>
     h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: 0; }
     h2 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; letter-spacing: 0.04em; }
     p { line-height: 1.48; color: var(--muted); }
-    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-    .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f8fafc; }
-    .stat strong { display: block; font-size: 20px; }
-    .stat span { color: var(--muted); font-size: 12px; }
     .selection-card {
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -123,7 +119,8 @@ HTML_TEMPLATE = """<!doctype html>
     .legend { display: flex; flex-wrap: wrap; gap: 7px; }
     .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; }
     .swatch { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
-    .hint { position: absolute; left: 18px; bottom: 16px; color: var(--muted); background: rgba(255,255,255,.9); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+    .stats-bar { position: absolute; left: 18px; right: 18px; bottom: 16px; color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; white-space: nowrap; }
+    .stats-bar strong { color: var(--ink); }
     .sidebar-toggle {
       position: absolute;
       left: 14px;
@@ -155,13 +152,6 @@ HTML_TEMPLATE = """<!doctype html>
   <div class="app">
     <aside>
       <h1>Mathlib Network Explorer</h1>
-      <div class="stat-grid">
-        <div class="stat"><strong id="nodeCount">0</strong><span>Modules</span></div>
-        <div class="stat"><strong id="edgeCount">0</strong><span>Imports</span></div>
-        <div class="stat"><strong id="communityCount">0</strong><span>Communities</span></div>
-        <div class="stat"><strong id="maxDepth">0</strong><span>Max depth</span></div>
-        <div class="stat"><strong id="structuralCount">0</strong><span>Structure edges</span></div>
-      </div>
       <h2>Selected</h2>
       <section id="selectionCard" class="selection-card">
         <h3 id="selectedTitle">No module selected</h3>
@@ -205,7 +195,13 @@ HTML_TEMPLATE = """<!doctype html>
       <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
       <canvas id="graph"></canvas>
       <div id="tooltip" class="tooltip" hidden></div>
-      <div class="hint">Scroll to zoom. Drag to pan. Click a node to inspect dependency flow.</div>
+      <div class="stats-bar">
+        <strong id="nodeCount">0</strong> Modules ·
+        <strong id="edgeCount">0</strong> Imports ·
+        <strong id="structuralCount">0</strong> Structure edges ·
+        <strong id="communityCount">0</strong> Communities ·
+        Max depth <strong id="maxDepth">0</strong>
+      </div>
     </main>
   </div>
   <script id="graph-data" type="application/json">__GRAPH_JSON__</script>
