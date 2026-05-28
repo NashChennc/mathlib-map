@@ -49,8 +49,7 @@ type GraphPayload = {
   edges: GraphEdge[];
 };
 
-const DISPLAY_Y_COMPRESSION = 0.46;
-const OVERVIEW_LABEL_ZOOM_IN_LIMIT = 0.85;
+const OVERVIEW_LABEL_ZOOM_IN_LIMIT = 0.4;
 const MAX_OVERVIEW_RATIO_MULTIPLIER = 1.18;
 const SELECTION_LABEL_MAX_CHARS = 48;
 const SELECTION_LABEL_PADDING = 8;
@@ -142,13 +141,6 @@ async function loadGraph(): Promise<GraphPayload> {
     throw new Error("Unable to load graph.json. Run `make web` or copy data/processed/graph.json next to this build.");
   }
   return response.json() as Promise<GraphPayload>;
-}
-
-function metricSize(node: GraphNode, mode: string): number {
-  if (mode === "pagerank") return 2.5 + Math.sqrt(Math.max(0, node.pagerank)) * 80;
-  if (mode === "betweenness") return 3 + Math.sqrt(Math.max(0, node.betweenness)) * 80;
-  if (mode === "symbols") return 3 + Math.sqrt(Math.max(0, node.nSymbols)) * 1.8;
-  return node.size;
 }
 
 function nodeTitle(node: GraphNode): string {
@@ -341,6 +333,30 @@ function collectTransitive(start: string, map: Map<string, Set<string>>): Set<st
 }
 
 loadGraph().then((payload) => {
+  const visual = payload.summary.visual as Record<string, number>;
+  const LBL_HITBOX_MIN = visual.label_hitbox_min;
+  const LBL_HITBOX_MARGIN = visual.label_hitbox_margin;
+  const LBL_AVOID_MIN = visual.label_avoid_min;
+  const LBL_AVOID_MARGIN = visual.label_avoid_margin;
+  const EDGE_SIZE_STRUCTURAL = visual.edge_size_structural;
+  const EDGE_SIZE_RAW = visual.edge_size_raw;
+  const EDGE_SIZE_HIGHLIGHT = visual.edge_size_highlight;
+  const EDGE_SIZE_FLOW = visual.edge_size_flow;
+  const EDGE_SIZE_FAINT = visual.edge_size_faint;
+  const SIZE_PAGERANK_BASE = visual.size_pagerank_base;
+  const SIZE_PAGERANK_SCALE = visual.size_pagerank_scale;
+  const SIZE_BETWEENNESS_BASE = visual.size_betweenness_base;
+  const SIZE_BETWEENNESS_SCALE = visual.size_betweenness_scale;
+  const SIZE_SYMBOLS_BASE = visual.size_symbols_base;
+  const SIZE_SYMBOLS_SCALE = visual.size_symbols_scale;
+
+  function metricSize(node: GraphNode, mode: string): number {
+    if (mode === "pagerank") return SIZE_PAGERANK_BASE + Math.sqrt(Math.max(0, node.pagerank)) * SIZE_PAGERANK_SCALE;
+    if (mode === "betweenness") return SIZE_BETWEENNESS_BASE + Math.sqrt(Math.max(0, node.betweenness)) * SIZE_BETWEENNESS_SCALE;
+    if (mode === "symbols") return SIZE_SYMBOLS_BASE + Math.sqrt(Math.max(0, node.nSymbols)) * SIZE_SYMBOLS_SCALE;
+    return node.size;
+  }
+
   setText("node-count", payload.summary.node_count ?? payload.nodes.length);
   setText("edge-count", payload.summary.edge_count ?? payload.edges.length);
   setText("community-count", payload.summary.community_count);
@@ -355,7 +371,7 @@ loadGraph().then((payload) => {
       ...node,
       label: node.label,
       x: node.x,
-      y: node.y * DISPLAY_Y_COMPRESSION,
+      y: node.y,
       size: node.size,
       color: node.color,
       baseColor: node.color,
@@ -372,7 +388,7 @@ loadGraph().then((payload) => {
         color: edge.isStructural ? "rgba(148, 163, 184, 0.10)" : "rgba(148, 163, 184, 0.035)",
         baseColor: edge.isStructural ? "rgba(148, 163, 184, 0.10)" : "rgba(148, 163, 184, 0.035)",
         isStructural: edge.isStructural,
-        size: edge.isStructural ? 0.45 : 0.25,
+        size: edge.isStructural ? EDGE_SIZE_STRUCTURAL : EDGE_SIZE_RAW,
         hidden: false
       });
     }
@@ -384,7 +400,7 @@ loadGraph().then((payload) => {
     const group = payload.nodes.filter((node) => node.topic === topic);
     if (group.length < 4) continue;
     const xs = group.map((node) => node.x).sort((a, b) => a - b);
-    const ys = group.map((node) => node.y * DISPLAY_Y_COMPRESSION).sort((a, b) => a - b);
+    const ys = group.map((node) => node.y).sort((a, b) => a - b);
     topicAnchors.set(topic, {
       topic,
       color: group[0]?.color || "#64748b",
@@ -408,7 +424,8 @@ loadGraph().then((payload) => {
     renderEdgeLabels: false,
     defaultEdgeColor: "rgba(148, 163, 184, 0.18)",
     labelRenderedSizeThreshold: 12,
-    maxCameraRatio: MAX_OVERVIEW_RATIO_MULTIPLIER
+    maxCameraRatio: MAX_OVERVIEW_RATIO_MULTIPLIER,
+    minCameraRatio: 0.02,
   });
   const overlay = document.querySelector<HTMLDivElement>("#topic-overlay");
   const selectionLabelOverlay = document.querySelector<HTMLDivElement>("#selection-label-overlay");
@@ -567,7 +584,7 @@ loadGraph().then((payload) => {
         id: nodeId,
         attrs,
         point,
-        radius: Math.max(6, size + 5),
+        radius: Math.max(LBL_HITBOX_MIN, size + LBL_HITBOX_MARGIN),
         isSelected: nodeId === selectedNode
       });
     }
@@ -634,7 +651,7 @@ loadGraph().then((payload) => {
       if (graph.getNodeAttribute(nodeId, "hidden")) continue;
       const attrs = graph.getNodeAttributes(nodeId) as GraphNode;
       const point = rendererAny.graphToViewport({ x: attrs.x, y: attrs.y });
-      const radius = Math.max(5, Number(graph.getNodeAttribute(nodeId, "size") ?? attrs.size ?? 4) + 5);
+      const radius = Math.max(LBL_AVOID_MIN, Number(graph.getNodeAttribute(nodeId, "size") ?? attrs.size ?? 4) + LBL_AVOID_MARGIN);
       if (
         point.x + radius < 0 ||
         point.y + radius < 0 ||
@@ -674,7 +691,7 @@ loadGraph().then((payload) => {
       point,
       hoverLabel.offsetWidth,
       hoverLabel.offsetHeight,
-      Math.max(6, size + 5),
+      Math.max(LBL_HITBOX_MIN, size + LBL_HITBOX_MARGIN),
         container.clientWidth,
         container.clientHeight,
         relatedNodeAvoidRects(nodeId),
@@ -742,22 +759,22 @@ loadGraph().then((payload) => {
       );
       if (!selectedNode) {
         graph.setEdgeAttribute(edgeId, "color", graph.getEdgeAttribute(edgeId, "baseColor"));
-        graph.setEdgeAttribute(edgeId, "size", isStructural ? 0.45 : 0.25);
+        graph.setEdgeAttribute(edgeId, "size", isStructural ? EDGE_SIZE_STRUCTURAL : EDGE_SIZE_RAW);
       } else if (directImport) {
         graph.setEdgeAttribute(edgeId, "color", "rgba(37, 99, 235, 0.9)");
-        graph.setEdgeAttribute(edgeId, "size", 2.4);
+        graph.setEdgeAttribute(edgeId, "size", EDGE_SIZE_HIGHLIGHT);
       } else if (directDependent) {
         graph.setEdgeAttribute(edgeId, "color", "rgba(22, 163, 74, 0.9)");
-        graph.setEdgeAttribute(edgeId, "size", 2.4);
+        graph.setEdgeAttribute(edgeId, "size", EDGE_SIZE_HIGHLIGHT);
       } else if (dependencyFlow) {
         graph.setEdgeAttribute(edgeId, "color", "rgba(37, 99, 235, 0.09)");
-        graph.setEdgeAttribute(edgeId, "size", 0.6);
+        graph.setEdgeAttribute(edgeId, "size", EDGE_SIZE_FLOW);
       } else if (dependentFlow) {
         graph.setEdgeAttribute(edgeId, "color", "rgba(22, 163, 74, 0.09)");
-        graph.setEdgeAttribute(edgeId, "size", 0.6);
+        graph.setEdgeAttribute(edgeId, "size", EDGE_SIZE_FLOW);
       } else {
         graph.setEdgeAttribute(edgeId, "color", "rgba(148, 163, 184, 0.012)");
-        graph.setEdgeAttribute(edgeId, "size", 0.25);
+        graph.setEdgeAttribute(edgeId, "size", EDGE_SIZE_FAINT);
       }
     }
     renderer.refresh();

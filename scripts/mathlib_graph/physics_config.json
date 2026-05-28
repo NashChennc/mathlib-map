@@ -1,0 +1,85 @@
+{
+  "----": "========================== 基础单位 ==========================",
+
+  "BASE_SPACING": 10.0,
+  "__BASE_SPACING": "归一化空间参数的基准单位。代码中: actual_layout_units = config_value × BASE_SPACING。碰撞/弹簧这类恒定步长力也按 normalized_step × BASE_SPACING 转成实际布局单位；锚点刚度和阻尼为无量纲参数。",
+
+  "----.": "========================== 气泡大小 ==========================",
+
+  "BUBBLE_BASE_RADIUS": 0.2,
+  "__BUBBLE_BASE_RADIUS": "气泡基础半径 (归一化到 BASE_SPACING)。radius = (BUBBLE_BASE_RADIUS + BUBBLE_LOG_SCALE × log1p(descendant_count)) × BASE_SPACING",
+
+  "BUBBLE_LOG_SCALE": 0.3,
+  "__BUBBLE_LOG_SCALE": "气泡半径的对数增长系数 (归一化到 BASE_SPACING)。值越大，高依赖模块的气泡越大",
+
+  "----..": "========================== 初始坐标 (x0, y0) ==========================",
+
+  "__x0": "x0 = rank × LAYER_GAP × BASE_SPACING + log1p(ancestor_count) × ANCESTOR_SCALE × BASE_SPACING  ——  rank 为依赖拓扑层序，ancestor_count 微调同层内 x 位置。",
+
+  "LAYER_GAP": 20.0,
+  "__LAYER_GAP": "x 方向层间距 (归一化到 BASE_SPACING)。x0 = rank × LAYER_GAP × BASE_SPACING + log1p(ancestor_count) × ANCESTOR_SCALE × BASE_SPACING",
+
+  "ANCESTOR_SCALE": 0.0,
+  "__ANCESTOR_SCALE": "祖先数对 x0 的微调系数 (归一化到 BASE_SPACING)。x0 += log1p(ancestor_count) × ANCESTOR_SCALE × BASE_SPACING",
+
+  "__y0": "y0 = lane_y_base + sub_offset。topic band 仅决定 topic 顺序，不贡献空间距离；y_cursor 从 0 开始逐 topic 累进。每个 topic 内 lane_y_base = y_cursor + lane_index × LANE_GAP × BASE_SPACING，topic 写完后 y_cursor += lane数 × LANE_GAP × BASE_SPACING + LANE_GAP × TOPIC_GAP_MULTIPLIER × BASE_SPACING，确保不同 topic 在 y 方向不重叠。力模拟以 (x0, y0) 为锚点，在 max_dx/max_dy 范围内微调。",
+
+  "sub_offset": "sub_offset 通过 hash 为同 lane 内节点引入微小 y 散开。sub_offset = hash_offset × LANE_SUB_OFFSET × LANE_GAP × BASE_SPACING",
+
+  "LANE_GAP": 1.0,
+  "__LANE_GAP": "y 方向 lane 间距 (归一化到 BASE_SPACING)。lane_y_base = y_cursor + lane_index × LANE_GAP × BASE_SPACING",
+
+  "TOPIC_GAP_MULTIPLIER": 20.0,
+  "__TOPIC_GAP_MULTIPLIER": "topic 组之间的额外间距系数。topic_gap = LANE_GAP × TOPIC_GAP_MULTIPLIER × BASE_SPACING",
+
+  "LANE_SUB_OFFSET": 0.0,
+  "__LANE_SUB_OFFSET": "sub-namespace 微调偏移系数 (归一化到 LANE_GAP)。sub_offset = hash_offset × LANE_SUB_OFFSET × LANE_GAP × BASE_SPACING",
+
+  "----...": "========================== 力模拟边界约束 ==========================",
+
+  "MAX_X_DEVIATION_FRAC": 15.0,
+  "__MAX_X_DEVIATION_FRAC": "max_dx = MAX_X_DEVIATION_FRAC × LAYER_GAP × BASE_SPACING  →  x ∈ [x0 - max_dx, x0 + max_dx]; 设为负值则弃用 X 钳位。钳位关闭时，初始 jitter 的参考宽度回退为 LAYER_GAP × BASE_SPACING。",
+
+  "MAX_Y_DEVIATION_FRAC": 10.0,
+  "__MAX_Y_DEVIATION_FRAC": "max_dy = MAX_Y_DEVIATION_FRAC × LANE_GAP × BASE_SPACING  →  y ∈ [y0 - max_dy, y0 + max_dy]; 设为负值则弃用 Y 钳位。钳位关闭时，初始 jitter 的参考高度回退为 LANE_GAP × BASE_SPACING。",
+
+  "----....": "========================== 力模拟调度 ==========================",
+
+  "FORCE_SEED": 42,
+  "__FORCE_SEED": "random.seed(FORCE_SEED)  用于初始抖动和任何随机操作",
+
+  "FORCE_ITERATIONS": 240,
+  "__FORCE_ITERATIONS": "总迭代步数",
+
+  "DAMPING_START": 1.05,
+  "__DAMPING_START": "damping(t) = DAMPING_START + (DAMPING_END - DAMPING_START) × (t / (N-1))  线性插值; >1 = 加速, <1 = 冷却",
+
+  "DAMPING_END": 0.25,
+  "__DAMPING_END": "damping(t) 在最后一步的值。pos += force × damping",
+
+  "INITIAL_JITTER_FRAC": 0.25,
+  "__INITIAL_JITTER_FRAC": "pos_init = (x0 + U(-jj, jj) × jitter_ref_x,  y0 + U(-jj, jj) × jitter_ref_y)  打破完全共线。若某轴钳位开启，jitter_ref 为该轴 max_deviation；若钳位关闭，jitter_ref 为该轴一个基础 gap。",
+
+  "----.....": "========================== 锚点力 ==========================",
+
+  "ANCHOR_FORCE_STRENGTH": 1.0,
+  "__ANCHOR_FORCE_STRENGTH": "F_anchor = ANCHOR_FORCE_STRENGTH × (pos0 - pos)  胡克弹簧，拉回初始坐标。该参数为无量纲刚度。",
+
+  "----......": "========================== 碰撞斥力 ==========================",
+
+  "COLLISION_RADIUS": 10.0,
+  "__COLLISION_RADIUS": "气泡表面之间的额外斥力间隙 / padding (归一化到 BASE_SPACING)。effective_pair_radius = bubble_radius(u) + bubble_radius(v) + COLLISION_RADIUS × BASE_SPACING；if dist² < effective_pair_radius²:  F = COLLISION_FORCE_STRENGTH × effective_pair_radius² / dist²",
+
+  "COLLISION_FORCE_STRENGTH": 1.0,
+  "__COLLISION_FORCE_STRENGTH": "COLLISION_FORCE_STRENGTH 是参考距离处的归一化力大小。参考距离 effective_pair_radius = bubble_radius(u) + bubble_radius(v) + COLLISION_RADIUS × BASE_SPACING；当 dist = effective_pair_radius 时，normalized_force = COLLISION_FORCE_STRENGTH，actual_force = COLLISION_FORCE_STRENGTH × BASE_SPACING。当前默认 1.0 表示在大致间隔处（算上半径和 padding）为 1 个归一化力单位。dist 更小时按 1 / normalized_dist² 增强。",
+
+  "----.......": "========================== 边弹簧力 ==========================",
+
+  "SPRING_FORCE_STRENGTH": 0.0,
+  "__SPRING_FORCE_STRENGTH": "F_spring = (SPRING_FORCE_STRENGTH × BASE_SPACING) × (v_pos - u_pos) / |v_pos - u_pos|  沿结构边的恒定吸引。该参数是归一化步长，实际每次迭代、阻尼前的布局单位步长为 SPRING_FORCE_STRENGTH × BASE_SPACING。",
+
+  "----........": "========================== 前端渲染 ==========================",
+
+  "__DISPLAY_ASPECT_RATIO": "前端渲染直接使用力模拟输出的真实 x/y 比例，不再单独压缩 y 轴。"
+
+}

@@ -18,22 +18,61 @@ import pandas as pd
 from .io import filename_to_module, normalize_import, write_csv, write_json
 from .topics import band_for_topic, color_for_topic, namespace_lane, sub_namespace, topic_from_module
 
-LAYER_GAP = 42.0
-ANCESTOR_SCALE = 10.0
-LANE_GAP = 14.0
-TOPIC_GAP_MULTIPLIER = 3.4
-LANE_SUB_OFFSET = 1.8
-MAX_X_DEVIATION_FRAC = 0.55
-MAX_Y_DEVIATION_FRAC = 0.8
-FORCE_SEED = 42
-FORCE_ITERATIONS = 240
-ANCHOR_FORCE_STRENGTH = 0.075
-COLLISION_RADIUS = 10.0
-COLLISION_FORCE_STRENGTH = 1.35
-SPRING_FORCE_STRENGTH = 0.015
-INITIAL_JITTER_FRAC = 0.22
-DAMPING_START = 1.05
-DAMPING_END = 0.35
+_PHYSICS_CFG_PATH = Path(__file__).parent / "physics_config.json"
+
+
+def _load_physics_config() -> dict[str, float]:
+    if _PHYSICS_CFG_PATH.exists():
+        raw = json.loads(_PHYSICS_CFG_PATH.read_text())
+        return {k: float(v) for k, v in raw.items() if k[0].isalpha() and k.isupper()}
+    raise FileNotFoundError(f"Physics config not found at {_PHYSICS_CFG_PATH}")
+
+
+_CFG = _load_physics_config()
+
+LAYER_GAP = _CFG["LAYER_GAP"]
+ANCESTOR_SCALE = _CFG["ANCESTOR_SCALE"]
+LANE_GAP = _CFG["LANE_GAP"]
+TOPIC_GAP_MULTIPLIER = _CFG["TOPIC_GAP_MULTIPLIER"]
+LANE_SUB_OFFSET = _CFG["LANE_SUB_OFFSET"]
+MAX_X_DEVIATION_FRAC = _CFG["MAX_X_DEVIATION_FRAC"]
+MAX_Y_DEVIATION_FRAC = _CFG["MAX_Y_DEVIATION_FRAC"]
+FORCE_SEED = int(_CFG["FORCE_SEED"])
+FORCE_ITERATIONS = int(_CFG["FORCE_ITERATIONS"])
+ANCHOR_FORCE_STRENGTH = _CFG["ANCHOR_FORCE_STRENGTH"]
+COLLISION_RADIUS = _CFG["COLLISION_RADIUS"]
+COLLISION_FORCE_STRENGTH = _CFG["COLLISION_FORCE_STRENGTH"]
+SPRING_FORCE_STRENGTH = _CFG["SPRING_FORCE_STRENGTH"]
+INITIAL_JITTER_FRAC = _CFG["INITIAL_JITTER_FRAC"]
+DAMPING_START = _CFG["DAMPING_START"]
+DAMPING_END = _CFG["DAMPING_END"]
+BASE_SPACING = _CFG["BASE_SPACING"]
+BUBBLE_BASE_RADIUS = _CFG["BUBBLE_BASE_RADIUS"]
+BUBBLE_LOG_SCALE = _CFG["BUBBLE_LOG_SCALE"]
+
+
+def _sp(value: float) -> float:
+    """Convert a normalized config value to absolute spatial units."""
+    return value * BASE_SPACING
+
+
+def _normalized_step(value: float) -> float:
+    """Convert a normalized per-iteration step to absolute spatial units."""
+    return value * BASE_SPACING
+
+
+def _max_deviation(frac: float, gap: float) -> float | None:
+    """Return an absolute clamp radius, or None when that axis is unclamped."""
+    return frac * _sp(gap) if frac >= 0 else None
+
+
+def _jitter_reference(max_deviation: float | None, gap: float) -> float:
+    """Use the clamp radius for jitter, falling back to one gap when unclamped."""
+    return max_deviation if max_deviation is not None else _sp(gap)
+
+
+def _bubble_radius(descendant_count: int) -> float:
+    return (BUBBLE_BASE_RADIUS + BUBBLE_LOG_SCALE * math.log1p(max(0, descendant_count))) * BASE_SPACING
 
 
 def _safe_str(value: Any) -> str:
@@ -253,12 +292,12 @@ def _compute_initial_coords(
         lane_order[topic].append(lane)
 
     lane_y_base: dict[str, float] = {}
-    y_cursor = min(band_for_topic(topic) for topic in lane_order) if lane_order else 0.0
+    y_cursor = 0.0
     for topic in sorted(lane_order, key=band_for_topic):
         lanes = lane_order[topic]
         for li, lane in enumerate(lanes):
-            lane_y_base[lane] = y_cursor + li * LANE_GAP
-        y_cursor += max(1, len(lanes)) * LANE_GAP + LANE_GAP * TOPIC_GAP_MULTIPLIER
+            lane_y_base[lane] = y_cursor + li * _sp(LANE_GAP)
+        y_cursor += max(1, len(lanes)) * _sp(LANE_GAP) + _sp(LANE_GAP) * TOPIC_GAP_MULTIPLIER
 
     for node_id in nodes["id"]:
         lane = namespace_lane(node_id)
@@ -268,10 +307,10 @@ def _compute_initial_coords(
         sub_offset = 0.0
         if sub_parts:
             sub_idx = _stable_bucket(sub_parts[0], 13) - 6
-            sub_offset = sub_idx * LANE_SUB_OFFSET
+            sub_offset = sub_idx * LANE_SUB_OFFSET * _sp(LANE_GAP)
         rank_val = rank_map.get(node_id, 0)
         anc = ancestor_map.get(node_id, 0)
-        x0_map[node_id] = rank_val * LAYER_GAP + math.log1p(anc) * ANCESTOR_SCALE
+        x0_map[node_id] = rank_val * _sp(LAYER_GAP) + math.log1p(anc) * ANCESTOR_SCALE * BASE_SPACING
         y0_map[node_id] = base_y + sub_offset
         lane_map[node_id] = lane
         index_map[node_id] = by_topic_lane.get((topic_from_module(node_id), lane), []).index(node_id)
@@ -299,16 +338,28 @@ def _force_refine(
     x0_map: dict[str, float],
     y0_map: dict[str, float],
     structural_edges: set[tuple[str, str]],
+    bubble_radius_map: dict[str, float],
 ) -> dict[str, tuple[float, float]]:
     rng = random.Random(FORCE_SEED)
-    max_dx = MAX_X_DEVIATION_FRAC * LAYER_GAP
-    max_dy = MAX_Y_DEVIATION_FRAC * LANE_GAP
+    max_dx = _max_deviation(MAX_X_DEVIATION_FRAC, LAYER_GAP)
+    max_dy = _max_deviation(MAX_Y_DEVIATION_FRAC, LANE_GAP)
+    jitter_dx = _jitter_reference(max_dx, LAYER_GAP)
+    jitter_dy = _jitter_reference(max_dy, LANE_GAP)
 
     node_list = sorted(x0_map)
+    collision_padding = max(0.0, _sp(COLLISION_RADIUS))
+    collision_step = _normalized_step(COLLISION_FORCE_STRENGTH)
+    spring_step = _normalized_step(SPRING_FORCE_STRENGTH)
+    collision_radii = {
+        node: bubble_radius_map.get(node, _bubble_radius(0)) + collision_padding / 2
+        for node in node_list
+    }
+    max_pair_collision_radius = max((radius * 2 for radius in collision_radii.values()), default=max(1.0, collision_padding))
+    cell_size = max(1.0, max_pair_collision_radius)
     positions: dict[str, list[float]] = {
         node: [
-            x0_map[node] + rng.uniform(-INITIAL_JITTER_FRAC, INITIAL_JITTER_FRAC) * max_dx,
-            y0_map[node] + rng.uniform(-INITIAL_JITTER_FRAC, INITIAL_JITTER_FRAC) * max_dy,
+            x0_map[node] + rng.uniform(-INITIAL_JITTER_FRAC, INITIAL_JITTER_FRAC) * jitter_dx,
+            y0_map[node] + rng.uniform(-INITIAL_JITTER_FRAC, INITIAL_JITTER_FRAC) * jitter_dy,
         ]
         for node in node_list
     }
@@ -330,8 +381,8 @@ def _force_refine(
         min_y, max_y = min(ys), max(ys)
         grid_width = max(max_x - min_x, 1.0)
         grid_height = max(max_y - min_y, 1.0)
-        grid_cols = max(1, int(grid_width / (COLLISION_RADIUS * 3)))
-        grid_rows = max(1, int(grid_height / (COLLISION_RADIUS * 3)))
+        grid_cols = max(1, int(grid_width / cell_size))
+        grid_rows = max(1, int(grid_height / cell_size))
         spatial: dict[tuple[int, int], list[str]] = defaultdict(list)
         for node in node_list:
             cx = int((positions[node][0] - min_x) / grid_width * (grid_cols - 1)) if grid_cols > 0 else 0
@@ -351,8 +402,10 @@ def _force_refine(
                         dx = x - ox
                         dy = y - oy
                         dist_sq = dx * dx + dy * dy + 0.01
-                        if dist_sq < COLLISION_RADIUS * COLLISION_RADIUS:
-                            force = COLLISION_FORCE_STRENGTH * COLLISION_RADIUS * COLLISION_RADIUS / dist_sq
+                        pair_radius = collision_radii[node] + collision_radii[other]
+                        if dist_sq < pair_radius * pair_radius:
+                            normalized_dist_sq = dist_sq / (pair_radius * pair_radius)
+                            force = collision_step / normalized_dist_sq
                             fx = (dx / math.sqrt(dist_sq)) * force
                             fy = (dy / math.sqrt(dist_sq)) * force
                             forces[node][0] += fx
@@ -367,8 +420,8 @@ def _force_refine(
                 dx = vx - ux
                 dy = vy - uy
                 dist = math.sqrt(dx * dx + dy * dy) + 0.01
-                fx = SPRING_FORCE_STRENGTH * dx / dist
-                fy = SPRING_FORCE_STRENGTH * dy / dist
+                fx = spring_step * dx / dist
+                fy = spring_step * dy / dist
                 forces[u][0] += fx
                 forces[u][1] += fy
                 forces[v][0] -= fx
@@ -378,8 +431,10 @@ def _force_refine(
             fx, fy = forces[node]
             positions[node][0] += fx * damping
             positions[node][1] += fy * damping
-            positions[node][0] = max(x0_map[node] - max_dx, min(x0_map[node] + max_dx, positions[node][0]))
-            positions[node][1] = max(y0_map[node] - max_dy, min(y0_map[node] + max_dy, positions[node][1]))
+            if max_dx is not None:
+                positions[node][0] = max(x0_map[node] - max_dx, min(x0_map[node] + max_dx, positions[node][0]))
+            if max_dy is not None:
+                positions[node][1] = max(y0_map[node] - max_dy, min(y0_map[node] + max_dy, positions[node][1]))
 
     return {node: (pos[0], pos[1]) for node, pos in positions.items()}
 
@@ -406,7 +461,8 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
     pagerank = nx.pagerank(graph) if graph.number_of_edges() else {node: 0.0 for node in graph.nodes}
 
     x0_map, y0_map, lane_map, index_map = _compute_initial_coords(nodes, rank_map, ancestor_map)
-    refined = _force_refine(graph, x0_map, y0_map, structural_edges)
+    bubble_radius_map = {node: _bubble_radius(descendant_map.get(node, 0)) for node in graph.nodes}
+    refined = _force_refine(graph, x0_map, y0_map, structural_edges, bubble_radius_map)
 
     max_pr = max(pagerank.values()) if pagerank else 1.0
     if max_pr <= 0:
@@ -433,7 +489,7 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
     enriched["y0"] = enriched["id"].map(y0_map).astype(float)
     enriched["x"] = enriched["id"].map(lambda n: refined.get(n, (x0_map.get(n, 0.0), y0_map.get(n, 0.0)))[0]).astype(float)
     enriched["y"] = enriched["id"].map(lambda n: refined.get(n, (x0_map.get(n, 0.0), y0_map.get(n, 0.0)))[1]).astype(float)
-    enriched["radius"] = enriched["descendant_count"].apply(lambda dc: 2.5 + 1.8 * math.log1p(dc))
+    enriched["radius"] = enriched["id"].map(bubble_radius_map).astype(float)
 
     edge_struct = set(structural_edges)
     edges_out = edges.copy()
@@ -458,6 +514,12 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
         .to_dict(orient="records")
     )
     raw_edge_count = int(graph.number_of_edges())
+    max_x_deviation = _max_deviation(MAX_X_DEVIATION_FRAC, LAYER_GAP)
+    max_y_deviation = _max_deviation(MAX_Y_DEVIATION_FRAC, LANE_GAP)
+    jitter_x = INITIAL_JITTER_FRAC * _jitter_reference(max_x_deviation, LAYER_GAP)
+    jitter_y = INITIAL_JITTER_FRAC * _jitter_reference(max_y_deviation, LANE_GAP)
+    collision_padding = max(0.0, _sp(COLLISION_RADIUS))
+    max_bubble_radius = max(bubble_radius_map.values()) if bubble_radius_map else _bubble_radius(0)
     metrics = {
         "node_count": int(graph.number_of_nodes()),
         "edge_count": raw_edge_count,
@@ -472,20 +534,63 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
         "community_count": int(enriched["community"].nunique()),
         "max_depth": int(enriched["depth"].max()) if len(enriched) else 0,
         "layout_mode": "force_refined",
-        "layer_gap": LAYER_GAP,
-        "lane_gap": LANE_GAP,
+        "physics_config": dict(sorted(_CFG.items())),
+        "physics_units": {
+            "normalized_spatial_values": "actual layout units = config value * base_spacing",
+            "topic_bands": "topic band numbers define ordering only; spacing is controlled by LANE_GAP and TOPIC_GAP_MULTIPLIER",
+            "force_strengths": "anchor strength is dimensionless; collision and spring strengths are normalized per-iteration steps, with actual layout-unit step = config value * base_spacing",
+            "collision": "reference distance = bubble_radius(source) + bubble_radius(target) + collision_padding; at that distance normalized force equals COLLISION_FORCE_STRENGTH",
+            "rendering": "frontends render with a uniform x/y scale and no display-only y compression",
+        },
+        "base_spacing": BASE_SPACING,
+        "layer_gap": _sp(LAYER_GAP),
+        "lane_gap": _sp(LANE_GAP),
         "topic_gap_multiplier": TOPIC_GAP_MULTIPLIER,
-        "topic_gap": LANE_GAP * TOPIC_GAP_MULTIPLIER,
-        "max_x_deviation": MAX_X_DEVIATION_FRAC * LAYER_GAP,
-        "max_y_deviation": MAX_Y_DEVIATION_FRAC * LANE_GAP,
-        "collision_radius": COLLISION_RADIUS,
+        "topic_gap": _sp(LANE_GAP) * TOPIC_GAP_MULTIPLIER,
+        "bubble_base_radius": _sp(BUBBLE_BASE_RADIUS),
+        "bubble_log_scale": _sp(BUBBLE_LOG_SCALE),
+        "bubble_base_radius_normalized": BUBBLE_BASE_RADIUS,
+        "bubble_log_scale_normalized": BUBBLE_LOG_SCALE,
+        "max_x_deviation": max_x_deviation,
+        "max_y_deviation": max_y_deviation,
+        "max_x_deviation_enabled": max_x_deviation is not None,
+        "max_y_deviation_enabled": max_y_deviation is not None,
+        "collision_radius": collision_padding,
+        "collision_padding": collision_padding,
+        "collision_padding_normalized": COLLISION_RADIUS,
+        "max_bubble_radius": max_bubble_radius,
+        "max_collision_pair_radius": 2 * max_bubble_radius + collision_padding,
         "collision_force_strength": COLLISION_FORCE_STRENGTH,
+        "collision_force_step": _normalized_step(COLLISION_FORCE_STRENGTH),
+        "collision_reference_force_normalized": COLLISION_FORCE_STRENGTH,
+        "collision_reference_force": _normalized_step(COLLISION_FORCE_STRENGTH),
         "anchor_force_strength": ANCHOR_FORCE_STRENGTH,
+        "spring_force_strength": SPRING_FORCE_STRENGTH,
+        "spring_force_step": _normalized_step(SPRING_FORCE_STRENGTH),
         "initial_jitter_frac": INITIAL_JITTER_FRAC,
+        "initial_jitter_x": jitter_x,
+        "initial_jitter_y": jitter_y,
         "force_seed": FORCE_SEED,
         "force_iterations": FORCE_ITERATIONS,
         "top_betweenness": top_betweenness,
         "top_pagerank": top_pagerank,
+        "visual": {
+            "label_hitbox_min": 6,
+            "label_hitbox_margin": 5,
+            "label_avoid_min": 5,
+            "label_avoid_margin": 5,
+            "edge_size_structural": 0.45,
+            "edge_size_raw": 0.25,
+            "edge_size_highlight": 2.4,
+            "edge_size_flow": 0.6,
+            "edge_size_faint": 0.25,
+            "size_pagerank_base": 2.5,
+            "size_pagerank_scale": 80,
+            "size_betweenness_base": 3,
+            "size_betweenness_scale": 80,
+            "size_symbols_base": 3,
+            "size_symbols_scale": 1.8,
+        },
     }
     return enriched.sort_values("id").reset_index(drop=True), edges_out, metrics
 

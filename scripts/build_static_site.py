@@ -252,13 +252,12 @@ HTML_TEMPLATE = """<!doctype html>
       left: 14px;
       bottom: 54px;
       z-index: 2;
-      pointer-events: none;
     }
     .edge-key { display: grid; gap: 7px; color: var(--muted); font-size: 12px; margin-top: 10px; }
     .edge-key span { display: inline-flex; align-items: center; gap: 7px; }
     .edge-line { width: 30px; height: 3px; border-radius: 999px; display: inline-block; }
     .legend { display: flex; flex-wrap: wrap; gap: 7px; }
-    .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; background: rgba(255, 255, 255, 0.88); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px; font-size: 12px; background: rgba(255, 255, 255, 0.88); cursor: pointer; }
     .swatch { width: 9px; height: 9px; border-radius: 999px; display: inline-block; }
     .stats-bar { position: absolute; left: 18px; right: 18px; bottom: 16px; color: var(--muted); font-size: 13px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; white-space: nowrap; }
     .stats-bar strong { color: var(--ink); }
@@ -338,6 +337,22 @@ HTML_TEMPLATE = """<!doctype html>
   <script>
     const graph = JSON.parse(document.getElementById('graph-data').textContent);
     const appConfig = JSON.parse(document.getElementById('app-config').textContent);
+    const visual = graph.summary.visual;
+    const LBL_HITBOX_MIN = visual.label_hitbox_min;
+    const LBL_HITBOX_MARGIN = visual.label_hitbox_margin;
+    const LBL_AVOID_MIN = visual.label_avoid_min;
+    const LBL_AVOID_MARGIN = visual.label_avoid_margin;
+    const EDGE_SIZE_STRUCTURAL = visual.edge_size_structural;
+    const EDGE_SIZE_RAW = visual.edge_size_raw;
+    const EDGE_SIZE_HIGHLIGHT = visual.edge_size_highlight;
+    const EDGE_SIZE_FLOW = visual.edge_size_flow;
+    const EDGE_SIZE_FAINT = visual.edge_size_faint;
+    const SIZE_PAGERANK_BASE = visual.size_pagerank_base;
+    const SIZE_PAGERANK_SCALE = visual.size_pagerank_scale;
+    const SIZE_BETWEENNESS_BASE = visual.size_betweenness_base;
+    const SIZE_BETWEENNESS_SCALE = visual.size_betweenness_scale;
+    const SIZE_SYMBOLS_BASE = visual.size_symbols_base;
+    const SIZE_SYMBOLS_SCALE = visual.size_symbols_scale;
     const appRoot = document.querySelector('.app');
     const canvas = document.getElementById('graph');
     const ctx = canvas.getContext('2d');
@@ -354,9 +369,8 @@ HTML_TEMPLATE = """<!doctype html>
     const selectedNeighborLists = document.getElementById('selectedNeighborLists');
     const nodes = graph.nodes;
     const edges = graph.edges;
-    const FIT_Y_COMPRESSION = 0.46;
     const MIN_ZOOM = 0.82;
-    const OVERVIEW_LABEL_ZOOM_LIMIT = 1.18;
+    const OVERVIEW_LABEL_ZOOM_LIMIT = 2.5;
     const SELECTION_LABEL_MAX_CHARS = 48;
     const SELECTION_LABEL_MAX_WIDTH = 220;
     const SELECTION_LABEL_PADDING = 8;
@@ -398,6 +412,10 @@ HTML_TEMPLATE = """<!doctype html>
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.innerHTML = `<span class="swatch" style="background:${color}"></span>${topic}`;
+      chip.addEventListener('click', () => {
+        topicSelect.value = topicSelect.value === topic ? '' : topic;
+        updateVisible();
+      });
       legend.appendChild(chip);
     }
     document.getElementById('nodeCount').textContent = graph.summary.node_count ?? nodes.length;
@@ -443,11 +461,17 @@ HTML_TEMPLATE = """<!doctype html>
       const w = canvas.clientWidth || 1;
       const h = canvas.clientHeight || 1;
       const margin = 34;
-      scaleX = (w - margin * 2) / Math.max(1, b.maxX - b.minX);
-      scaleY = ((h - margin * 2) / Math.max(1, b.maxY - b.minY)) * FIT_Y_COMPRESSION;
+      const spanX = Math.max(1, b.maxX - b.minX);
+      const spanY = Math.max(1, b.maxY - b.minY);
+      const fitScale = Math.min(
+        Math.max(1, w - margin * 2) / spanX,
+        Math.max(1, h - margin * 2) / spanY
+      );
+      scaleX = fitScale;
+      scaleY = fitScale;
       zoom = 1;
-      panX = margin - b.minX * scaleX;
-      panY = (h - (b.maxY - b.minY) * scaleY) / 2 - b.minY * scaleY;
+      panX = (w - spanX * fitScale) / 2 - b.minX * fitScale;
+      panY = (h - spanY * fitScale) / 2 - b.minY * fitScale;
     }
 
     function project(node) {
@@ -460,9 +484,9 @@ HTML_TEMPLATE = """<!doctype html>
 
     function metricSize(node) {
       const mode = appConfig.nodeSizeMode || 'size';
-      if (mode === 'pagerank') return 2.5 + Math.sqrt(Math.max(0, node.pagerank)) * 80;
-      if (mode === 'betweenness') return 3 + Math.sqrt(Math.max(0, node.betweenness)) * 80;
-      if (mode === 'symbols') return 3 + Math.sqrt(Math.max(0, node.nSymbols)) * 1.8;
+      if (mode === 'pagerank') return SIZE_PAGERANK_BASE + Math.sqrt(Math.max(0, node.pagerank)) * SIZE_PAGERANK_SCALE;
+      if (mode === 'betweenness') return SIZE_BETWEENNESS_BASE + Math.sqrt(Math.max(0, node.betweenness)) * SIZE_BETWEENNESS_SCALE;
+      if (mode === 'symbols') return SIZE_SYMBOLS_BASE + Math.sqrt(Math.max(0, node.nSymbols)) * SIZE_SYMBOLS_SCALE;
       return node.size;
     }
 
@@ -680,7 +704,13 @@ HTML_TEMPLATE = """<!doctype html>
     function passesFilters(node) {
       const q = search.value.trim().toLowerCase();
       const topic = topicSelect.value;
-      if (topic && node.topic !== topic) return false;
+      if (topic && node.topic !== topic) {
+        if (!selected) return false;
+        const directImports = outgoing.get(selected) || new Set();
+        const directDependents = incoming.get(selected) || new Set();
+        if (!directImports.has(node.id) && !directDependents.has(node.id) && node.id !== selected)
+          return false;
+      }
       const haystack = nodeSearchHaystack(node);
       if (q && !haystack.includes(q)) return false;
       return true;
@@ -814,7 +844,7 @@ HTML_TEMPLATE = """<!doctype html>
         const r = Math.max(2, metricSize(node) * Math.sqrt(Math.min(scaleX, scaleY)) * 0.5);
         const text = fitCanvasLabel(nodeTitle(node), SELECTION_LABEL_MAX_WIDTH - 14);
         const labelWidth = Math.min(SELECTION_LABEL_MAX_WIDTH, ctx.measureText(text).width + 14);
-        labels.push({ id, node, point: p, radius: Math.max(6, r + 5), text, labelWidth });
+        labels.push({ id, node, point: p, radius: Math.max(LBL_HITBOX_MIN, r + LBL_HITBOX_MARGIN), text, labelWidth });
       }
       const avoidRects = labels.map(label => rectFromCenter(label.point.x, label.point.y, label.radius + 3));
       const occupiedRects = [];
@@ -884,23 +914,23 @@ HTML_TEMPLATE = """<!doctype html>
         const source = project(byId.get(edge.source));
         const target = project(byId.get(edge.target));
         let stroke = edge.isStructural ? 'rgba(148, 163, 184, 0.10)' : 'rgba(148, 163, 184, 0.035)';
-        let width = edge.isStructural ? 0.45 : 0.25;
+        let width = edge.isStructural ? EDGE_SIZE_STRUCTURAL : EDGE_SIZE_RAW;
         if (selected) {
           if (directImport) {
             stroke = 'rgba(37, 99, 235, 0.9)';
-            width = 2.25;
+            width = EDGE_SIZE_HIGHLIGHT;
           } else if (directDependent) {
             stroke = 'rgba(22, 163, 74, 0.9)';
-            width = 2.25;
+            width = EDGE_SIZE_HIGHLIGHT;
           } else if (dependencyFlow) {
             stroke = 'rgba(37, 99, 235, 0.09)';
-            width = 0.6;
+            width = EDGE_SIZE_FLOW;
           } else if (dependentFlow) {
             stroke = 'rgba(22, 163, 74, 0.09)';
-            width = 0.6;
+            width = EDGE_SIZE_FLOW;
           } else {
             stroke = 'rgba(148, 163, 184, 0.012)';
-            width = 0.25;
+            width = EDGE_SIZE_FAINT;
           }
         }
         ctx.strokeStyle = stroke;
@@ -959,7 +989,7 @@ HTML_TEMPLATE = """<!doctype html>
         if (!node || !passesFilters(node)) continue;
         const p = project(node);
         const r = Math.max(2, metricSize(node) * Math.sqrt(Math.min(scaleX, scaleY)) * 0.5);
-        const radius = Math.max(5, r + 5);
+        const radius = Math.max(LBL_AVOID_MIN, r + LBL_AVOID_MARGIN);
         if (p.x + radius < 0 || p.y + radius < 0 || p.x - radius > canvas.clientWidth || p.y - radius > canvas.clientHeight) continue;
         rects.push(rectFromCenter(p.x, p.y, radius));
       }
@@ -984,14 +1014,16 @@ HTML_TEMPLATE = """<!doctype html>
         p,
         tooltip.offsetWidth,
         tooltip.offsetHeight,
-        Math.max(6, r + 5),
+        Math.max(LBL_HITBOX_MIN, r + LBL_HITBOX_MARGIN),
         canvas.clientWidth,
         canvas.clientHeight,
         relatedNodeAvoidRects(node),
         []
       );
-      tooltip.style.left = `${rect.left}px`;
-      tooltip.style.top = `${rect.top}px`;
+      const canvasLeft = canvas.offsetLeft;
+      const canvasTop = canvas.offsetTop;
+      tooltip.style.left = `${rect.left + canvasLeft}px`;
+      tooltip.style.top = `${rect.top + canvasTop}px`;
       tooltip.style.visibility = '';
       hoverLabelRect = rect;
       hoverLabelPoint = p;
@@ -1026,6 +1058,7 @@ HTML_TEMPLATE = """<!doctype html>
         return;
       }
       selected = null;
+      visibleNodes = nodes.filter(passesFilters);
       showTooltip(null);
       updateSelectedCard(null);
       draw();
