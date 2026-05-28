@@ -65,7 +65,39 @@ HTML_TEMPLATE = """<!doctype html>
       padding: 0;
       pointer-events: none;
     }
-    main { position: relative; min-width: 0; }
+    main { display: flex; flex-direction: column; position: relative; min-width: 0; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 6px 10px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .topbar input,
+    .topbar select {
+      width: auto;
+      margin-top: 0;
+      align-self: stretch;
+    }
+    .topbar button {
+      width: auto;
+      margin-top: 0;
+    }
+    .topbar input {
+      flex: 1;
+      min-width: 120px;
+      max-width: 320px;
+    }
+    .topbar select { min-width: 100px; }
+    .topbar-label {
+      display: inline;
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
     h1 { font-size: 20px; margin: 0 0 8px; letter-spacing: 0; }
     h2 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin: 22px 0 10px; letter-spacing: 0.04em; }
     p { line-height: 1.48; color: var(--muted); }
@@ -139,7 +171,6 @@ HTML_TEMPLATE = """<!doctype html>
     .neighbor-link:hover, .neighbor-link:focus-visible { background: #eff6ff; border-color: #93c5fd; outline: none; }
     .neighbor-title { font-size: 12px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
     .neighbor-id { color: var(--muted); font-size: 11px; line-height: 1.2; overflow-wrap: anywhere; }
-    label { display: block; margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
     input, select, button {
       width: 100%;
       border: 1px solid var(--line);
@@ -150,7 +181,7 @@ HTML_TEMPLATE = """<!doctype html>
       font: inherit;
     }
     button { cursor: pointer; background: var(--accent); color: white; border-color: var(--accent); margin-top: 10px; }
-    canvas { width: 100%; height: 100%; display: block; background: #f8fafc; }
+    canvas { flex: 1; min-height: 0; width: 100%; display: block; background: #f8fafc; }
     .tooltip {
       position: absolute;
       z-index: 3;
@@ -202,6 +233,9 @@ HTML_TEMPLATE = """<!doctype html>
       aside { max-height: 42vh; border-right: 0; border-bottom: 1px solid var(--line); }
       .app.sidebar-collapsed { grid-template-columns: 1fr; grid-template-rows: 0 1fr; }
       .app.sidebar-collapsed aside { border-bottom: 0; max-height: 0; }
+      .topbar { padding: 6px 8px; gap: 6px; }
+      .topbar input { min-width: 0; max-width: none; }
+      .topbar-label { display: none; }
     }
   </style>
 </head>
@@ -227,12 +261,6 @@ HTML_TEMPLATE = """<!doctype html>
           <div id="selectedNeighborLists" class="neighbor-lists"></div>
         </details>
       </section>
-      <h2>Controls</h2>
-      <label for="search">Search module</label>
-      <input id="search" placeholder="Algebra, Topology, Measure..." />
-      <label for="topic">Topic</label>
-      <select id="topic"><option value="">All topics</option></select>
-      <button id="reset">Reset view</button>
       <h2>Legend</h2>
       <div id="legend" class="legend"></div>
       <div class="edge-key">
@@ -241,8 +269,14 @@ HTML_TEMPLATE = """<!doctype html>
       </div>
     </aside>
     <main>
-      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
+      <div class="topbar">
+        <label for="search" class="topbar-label">Search</label>
+        <input id="search" type="text" placeholder="Algebra, Topology, Measure..." aria-label="Search module" />
+        <label for="topic" class="topbar-label">Topic</label>
+        <select id="topic" aria-label="Filter by topic"><option value="">All topics</option></select>
+      </div>
       <canvas id="graph"></canvas>
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar">‹</button>
       <div id="tooltip" class="tooltip" hidden></div>
       <div class="stats-bar">
         <strong id="nodeCount">0</strong> Modules ·
@@ -264,7 +298,6 @@ HTML_TEMPLATE = """<!doctype html>
     const tooltip = document.getElementById('tooltip');
     const search = document.getElementById('search');
     const topicSelect = document.getElementById('topic');
-    const resetButton = document.getElementById('reset');
     const sidebarToggle = document.getElementById('sidebarToggle');
     const selectedTitle = document.getElementById('selectedTitle');
     const selectedModule = document.getElementById('selectedModule');
@@ -339,6 +372,7 @@ HTML_TEMPLATE = """<!doctype html>
     let panX = 0;
     let panY = 0;
     let dragging = false;
+    let didDrag = false;
     let lastX = 0;
     let lastY = 0;
     let visibleNodes = nodes;
@@ -940,6 +974,7 @@ HTML_TEMPLATE = """<!doctype html>
         panY += y - lastY;
         lastX = x;
         lastY = y;
+        didDrag = true;
         draw();
         return;
       }
@@ -949,9 +984,10 @@ HTML_TEMPLATE = """<!doctype html>
       draw();
     });
     canvas.addEventListener('mouseleave', () => { hovered = null; showTooltip(null); draw(); });
-    canvas.addEventListener('mousedown', event => { dragging = true; lastX = event.offsetX; lastY = event.offsetY; });
+    canvas.addEventListener('mousedown', event => { dragging = true; didDrag = false; lastX = event.offsetX; lastY = event.offsetY; });
     window.addEventListener('mouseup', () => { dragging = false; });
     canvas.addEventListener('click', event => {
+      if (didDrag) return;
       const node = nearestNode(event.offsetX, event.offsetY);
       if (node) {
         selectNodeById(node.id, { focus: false, reveal: false });
@@ -979,21 +1015,6 @@ HTML_TEMPLATE = """<!doctype html>
     }, { passive: false });
     search.addEventListener('input', updateVisible);
     topicSelect.addEventListener('change', updateVisible);
-    resetButton.addEventListener('click', () => {
-      selected = null;
-      hovered = null;
-      showTooltip(null);
-      search.value = '';
-      topicSelect.value = '';
-      zoom = 1;
-      scaleX = 1;
-      scaleY = 1;
-      panX = 0;
-      panY = 0;
-      fitIfNeeded(true);
-      updateSelectedCard(null);
-      updateVisible();
-    });
     function setSidebarCollapsed(collapsed) {
       sidebarCollapsed = collapsed;
       appRoot.classList.toggle('sidebar-collapsed', collapsed);
