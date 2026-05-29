@@ -19,6 +19,7 @@ from .io import filename_to_module, normalize_import, write_csv, write_json
 from .topics import band_for_topic, color_for_topic, namespace_lane, sub_namespace, topic_from_module
 
 _PHYSICS_CFG_PATH = Path(__file__).parent / "physics_config.json"
+MATHLIB_SOURCE_REPOSITORY = "https://github.com/leanprover-community/mathlib4"
 
 
 def _load_physics_config() -> dict[str, float]:
@@ -94,6 +95,26 @@ def _safe_bool(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes"}
     return bool(value)
+
+
+def _mathlib_source_ref(metrics: dict[str, Any]) -> str:
+    return (
+        _safe_str(metrics.get("mathlib_source_commit"))
+        or _safe_str(metrics.get("mathlib_source_ref"))
+        or "master"
+    )
+
+
+def _has_mathlib_source_metadata(metrics: dict[str, Any]) -> bool:
+    return any(
+        _safe_str(metrics.get(key))
+        for key in ("mathlib_source_commit", "mathlib_source_ref", "mathlib_source_dir")
+    ) or metrics.get("mathlib_source_file_count") is not None
+
+
+def _mathlib_source_uri(source_file: str, source_ref: str) -> str:
+    quoted_file = urllib.parse.quote(source_file, safe="/")
+    return f"{MATHLIB_SOURCE_REPOSITORY}/blob/{source_ref}/{quoted_file}"
 
 
 def _fallback_description(module: str, topic: str) -> tuple[str, str]:
@@ -652,16 +673,15 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
 
 def _graph_json(nodes: pd.DataFrame, edges: pd.DataFrame, metrics: dict[str, Any], source_name: str) -> dict[str, Any]:
     node_payload = []
-    source_root = _safe_str(metrics.get("mathlib_source_dir"))
-    resolved_source_root = Path(source_root).expanduser().resolve() if source_root else None
+    has_source_links = _has_mathlib_source_metadata(metrics)
+    source_ref = _mathlib_source_ref(metrics) if has_source_links else ""
     for row in nodes.itertuples(index=False):
         source_file = ""
         source_uri = ""
         filename = _safe_str(row.filename)
-        if resolved_source_root and filename and not bool(row.is_import_only):
+        if has_source_links and filename and not bool(row.is_import_only):
             source_file = filename
-            source_path = resolved_source_root / filename
-            source_uri = "vscode://file" + urllib.parse.quote(source_path.as_posix(), safe="/")
+            source_uri = _mathlib_source_uri(source_file, source_ref)
         node_payload.append(
             {
                 "id": row.id,
@@ -695,6 +715,7 @@ def _graph_json(nodes: pd.DataFrame, edges: pd.DataFrame, metrics: dict[str, Any
                 "hasDescription": bool(row.has_description),
                 "sourceFile": source_file,
                 "sourceUri": source_uri,
+                "sourceRef": source_ref if source_uri else "",
             }
         )
     edge_payload = [
@@ -709,11 +730,16 @@ def _graph_json(nodes: pd.DataFrame, edges: pd.DataFrame, metrics: dict[str, Any
         }
         for idx, row in enumerate(edges.itertuples(index=False))
     ]
+    public_metrics = dict(metrics)
+    public_metrics.pop("mathlib_source_dir", None)
+    if has_source_links:
+        public_metrics["mathlib_source_repository"] = MATHLIB_SOURCE_REPOSITORY
+        public_metrics["mathlib_source_display_ref"] = source_ref
     return {
         "summary": {
             "generated_at": datetime.now(UTC).isoformat(),
             "data_source": source_name,
-            **metrics,
+            **public_metrics,
         },
         "nodes": node_payload,
         "edges": edge_payload,

@@ -47,9 +47,8 @@ make data DATA_SOURCE=mathlib-source
 make web
 ```
 
-使用本地 Mathlib 源码快照构建时，选中模块会显示 `Open Lean file` 链接，
-通过 VS Code 的 `vscode://file/...` deep link 打开对应 `.lean` 文件。
-因此该数据源生成的 `graph.json` 会包含本机绝对路径。
+使用本地 Mathlib 源码快照构建时，选中模块会显示 `Open Mathlib source` 链接，
+在上游 Mathlib4 GitHub 仓库中打开对应 `.lean` 文件，并固定到生成图数据时记录的源码 commit。
 
 有网络时使用 Hugging Face 数据集：
 
@@ -122,11 +121,13 @@ make test           # 运行离线测试
 make all            # 完整产出管线
 ```
 
+使用 `make mathlib-source MATHLIB_FORCE=1` 可强制刷新缓存的 Mathlib 源码快照。
+
 ## 数据模型
 
 稳定的生成文件：
 
 - `nodes.csv`：每行一个模块，含中心性、社区、深度、布局和主题字段。
 - `edges.csv`：每行一条导入关系，`source imports target`。
-- `graph.json`：前端就绪的图数据；本地 Mathlib 源码构建还会在节点上包含 `sourceFile` 和 `sourceUri`。
+- `graph.json`：前端就绪的图数据；本地 Mathlib 源码构建还会在节点上包含 `sourceFile`、`sourceUri` 和 `sourceRef`。
 - `metrics.json`：计数、校验检查和 Top 分析结果。

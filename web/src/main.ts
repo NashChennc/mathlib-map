@@ -32,6 +32,7 @@ type GraphNode = {
   hasDescription: boolean;
   sourceFile: string;
   sourceUri: string;
+  sourceRef: string;
 };
 
 type GraphEdge = {
@@ -94,7 +95,7 @@ app.innerHTML = `
       <h2 id="selected-title">No module selected</h2>
       <div id="selected-module" class="module-id">-</div>
       <p id="selected-description" hidden></p>
-      <a id="selected-source-link" class="source-link" hidden>Open Lean file</a>
+      <a id="selected-source-link" class="source-link" hidden>Open Mathlib source</a>
       <div class="selected-meta">
         <div><strong id="selected-deps">0</strong><span>Direct imports</span></div>
         <div><strong id="selected-dependents">0</strong><span>Direct dependents</span></div>
@@ -299,7 +300,9 @@ function updateSelectedCard(
     const sourceUri = node?.sourceUri || "";
     sourceLink.hidden = !sourceUri;
     sourceLink.href = sourceUri;
-    sourceLink.title = node?.sourceFile ? `Open ${node.sourceFile}` : "Open Lean file";
+    sourceLink.title = node?.sourceFile
+      ? `Open ${node.sourceFile} at ${node.sourceRef || "master"}`
+      : "Open Mathlib source";
   }
   setText("selected-deps", node?.nDependencies ?? 0);
   setText("selected-dependents", node?.nDependents ?? 0);

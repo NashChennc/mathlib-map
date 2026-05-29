@@ -299,7 +299,7 @@ HTML_TEMPLATE = """<!doctype html>
         <h3 id="selectedTitle">No module selected</h3>
         <div id="selectedModule" class="module-id">-</div>
         <p id="selectedDescription" hidden></p>
-        <a id="selectedSourceLink" class="source-link" hidden>Open Lean file</a>
+        <a id="selectedSourceLink" class="source-link" hidden>Open Mathlib source</a>
         <div id="selectedNeighborLists" class="neighbor-lists"></div>
         <div id="selectedDetailPanel" class="detail-disclosure" hidden>
           <dl id="selectedDetailList"></dl>
@@ -729,7 +729,7 @@ HTML_TEMPLATE = """<!doctype html>
         selectedDescription.hidden = true;
         selectedSourceLink.hidden = true;
         selectedSourceLink.removeAttribute('href');
-        selectedSourceLink.title = 'Open Lean file';
+        selectedSourceLink.title = 'Open Mathlib source';
         updateDetailPanel(null);
         return;
       }
@@ -739,7 +739,9 @@ HTML_TEMPLATE = """<!doctype html>
       selectedDescription.hidden = false;
       selectedSourceLink.hidden = !node.sourceUri;
       selectedSourceLink.href = node.sourceUri || '';
-      selectedSourceLink.title = node.sourceFile ? `Open ${node.sourceFile}` : 'Open Lean file';
+      selectedSourceLink.title = node.sourceFile
+        ? `Open ${node.sourceFile} at ${node.sourceRef || 'master'}`
+        : 'Open Mathlib source';
       updateDetailPanel(node);
     }
 

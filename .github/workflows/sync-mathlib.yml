@@ -1,0 +1,55 @@
+name: Sync Mathlib graph
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Build Mathlib graph
+        run: |
+          make mathlib-source MATHLIB_REF=master
+          make data DATA_SOURCE=mathlib-source
+          make web
+          touch docs/.nojekyll
+
+      - name: Test and verify public artifacts
+        run: |
+          python -m unittest discover -s tests
+          ! grep -E 'vscode://file|/Users/|/home/' docs/index.html docs/graph.json data/processed/graph.json
+
+      - name: Create sync pull request
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/sync-mathlib
+          title: Sync Mathlib graph data
+          commit-message: Sync Mathlib graph data
+          body: |
+            Regenerates the GitHub Pages static graph from the latest Mathlib `master` snapshot.
+
+            This PR is opened instead of pushing directly to `main` so the branch-published Pages site rebuilds after merge.
+          add-paths: |
+            docs/index.html
+            docs/graph.json
+            docs/.nojekyll

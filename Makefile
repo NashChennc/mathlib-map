@@ -5,6 +5,8 @@ PROCESSED_DIR ?= data/processed
 HF_ROW_LIMIT ?= 0
 MATHLIB_SOURCE_DIR ?= data/raw/mathlib4
 MATHLIB_REF ?= master
+MATHLIB_FORCE ?= 0
+MATHLIB_FORCE_FLAG := $(if $(filter 1 true yes,$(MATHLIB_FORCE)),--force,)
 
 .PHONY: all data web test clean web-vite mathlib-source
 
@@ -14,7 +16,7 @@ data:
 	HF_ROW_LIMIT=$(HF_ROW_LIMIT) $(PYTHON) scripts/build_data.py --source $(DATA_SOURCE) --input "$(RAW_INPUT)" --output-dir $(PROCESSED_DIR)
 
 mathlib-source:
-	$(PYTHON) scripts/fetch_mathlib_source.py --output-dir $(MATHLIB_SOURCE_DIR) --ref $(MATHLIB_REF)
+	$(PYTHON) scripts/fetch_mathlib_source.py --output-dir $(MATHLIB_SOURCE_DIR) --ref $(MATHLIB_REF) $(MATHLIB_FORCE_FLAG)
 
 web:
 	$(PYTHON) scripts/build_static_site.py --data-dir $(PROCESSED_DIR) --docs-dir docs

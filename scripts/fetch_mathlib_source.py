@@ -32,15 +32,28 @@ def safe_extract(tar: tarfile.TarFile, destination: Path) -> None:
         tar.extractall(destination)
 
 
-def resolve_ref_sha(ref: str) -> str:
+def resolve_ref_sha(ref: str) -> tuple[str, bool]:
     url = f"https://api.github.com/repos/leanprover-community/mathlib4/commits/{ref}"
     request = urllib.request.Request(url, headers={"User-Agent": "mathlib-network-explorer"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return str(payload.get("sha") or ref)
+        return str(payload.get("sha") or ref), True
     except Exception:
-        return ref
+        return ref, False
+
+
+def read_marker(output_dir: Path) -> dict[str, str]:
+    marker = output_dir / ".mathlib_source_ref"
+    if not marker.exists():
+        return {}
+    values: dict[str, str] = {}
+    for line in marker.read_text(encoding="utf-8").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
 
 
 def write_marker(output_dir: Path, ref: str, commit: str) -> None:
@@ -54,11 +67,19 @@ def write_marker(output_dir: Path, ref: str, commit: str) -> None:
 def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
-    commit = resolve_ref_sha(args.ref)
+    commit, resolved_commit = resolve_ref_sha(args.ref)
     if (output_dir / "Mathlib").is_dir() and not args.force:
-        write_marker(output_dir, args.ref, commit)
-        print(f"Mathlib source already exists: {output_dir}")
-        return
+        existing = read_marker(output_dir)
+        existing_commit = existing.get("mathlib_source_commit", "")
+        if resolved_commit and existing_commit == commit:
+            write_marker(output_dir, args.ref, commit)
+            print(f"Mathlib source is already up to date at {commit}: {output_dir}")
+            return
+        if not resolved_commit:
+            write_marker(output_dir, args.ref, existing_commit or commit)
+            print(f"Mathlib source already exists; could not resolve latest {args.ref}: {output_dir}")
+            return
+        print(f"Updating Mathlib source from {existing_commit or 'unknown'} to {commit}")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     url = f"https://codeload.github.com/leanprover-community/mathlib4/tar.gz/{args.ref}"
     with tempfile.TemporaryDirectory() as tmp:

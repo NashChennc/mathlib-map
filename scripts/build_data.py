@@ -45,7 +45,7 @@ def main() -> None:
                 records = load_records(input_path)
     elif args.source == "mathlib-source":
         source_root = Path(args.input) if args.input else Path(args.raw_dir) / "mathlib4"
-        source_name = f"Full Mathlib source import graph ({source_root})"
+        source_name = "Full Mathlib source import graph"
         records = load_mathlib_source_records(source_root)
     else:
         if not args.input:

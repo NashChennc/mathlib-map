@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-import urllib.parse
 from pathlib import Path
 
 import pandas as pd
@@ -120,7 +119,7 @@ class PipelineTests(unittest.TestCase):
             coords_two = {node["id"]: (node["x"], node["y"]) for node in graph_two["nodes"]}
             self.assertEqual(coords_one, coords_two)
 
-    def test_build_graph_artifacts_adds_local_source_links(self) -> None:
+    def test_build_graph_artifacts_adds_github_source_links(self) -> None:
         rows = pd.DataFrame(
             [
                 {
@@ -136,17 +135,25 @@ class PipelineTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             rows.attrs["mathlib_source_dir"] = str(Path(tmp) / "math lib")
+            rows.attrs["mathlib_source_ref"] = "master"
+            rows.attrs["mathlib_source_commit"] = "abc123"
             out = Path(tmp) / "out"
             build_graph_artifacts(rows, out, "unit")
             graph = json.loads((out / "graph.json").read_text(encoding="utf-8"))
             by_id = {node["id"]: node for node in graph["nodes"]}
             source_node = by_id["Mathlib.Data.A"]
-            source_path = (Path(tmp) / "math lib" / "Mathlib/Data/A.lean").resolve()
-            expected_uri = "vscode://file" + urllib.parse.quote(source_path.as_posix(), safe="/")
+            expected_uri = "https://github.com/leanprover-community/mathlib4/blob/abc123/Mathlib/Data/A.lean"
             self.assertEqual(source_node["sourceFile"], "Mathlib/Data/A.lean")
             self.assertEqual(source_node["sourceUri"], expected_uri)
+            self.assertEqual(source_node["sourceRef"], "abc123")
+            self.assertNotIn("vscode://file", source_node["sourceUri"])
+            self.assertNotIn(str(Path(tmp)), json.dumps(graph))
+            self.assertNotIn("mathlib_source_dir", graph["summary"])
+            self.assertEqual(graph["summary"]["mathlib_source_repository"], "https://github.com/leanprover-community/mathlib4")
+            self.assertEqual(graph["summary"]["mathlib_source_display_ref"], "abc123")
             self.assertEqual(by_id["Mathlib.Init"]["sourceFile"], "")
             self.assertEqual(by_id["Mathlib.Init"]["sourceUri"], "")
+            self.assertEqual(by_id["Mathlib.Init"]["sourceRef"], "")
 
 
 class SourceParserTests(unittest.TestCase):

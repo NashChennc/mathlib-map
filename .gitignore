@@ -13,7 +13,4 @@ data/processed/*
 !data/processed/.gitkeep
 outputs/*
 !outputs/.gitkeep
-docs/index.html
-docs/graph.json
 docs/assets/
-
