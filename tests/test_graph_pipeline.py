@@ -10,6 +10,7 @@ import pandas as pd
 from scripts.mathlib_graph.io import filename_to_module, normalize_import
 from scripts.mathlib_graph.pipeline import build_graph_artifacts
 from scripts.mathlib_graph.source import extract_module_doc, load_mathlib_source_records, module_from_source_path, parse_imports
+from scripts.mathlib_graph.topics import topic_from_module
 
 
 class IoTests(unittest.TestCase):
@@ -23,6 +24,25 @@ class IoTests(unittest.TestCase):
     def test_normalize_import(self) -> None:
         self.assertEqual(normalize_import("['Mathlib.Init', 'Mathlib.Data.Nat.Basic']"), ["Mathlib.Init", "Mathlib.Data.Nat.Basic"])
         self.assertEqual(normalize_import("Mathlib.Init, Mathlib.Logic.Basic"), ["Mathlib.Init", "Mathlib.Logic.Basic"])
+
+
+class TopicTests(unittest.TestCase):
+    def test_added_mathlib_topics_are_whitelisted(self) -> None:
+        self.assertEqual(
+            topic_from_module("Mathlib.AlgebraicTopology.SimplicialSet.Basic"),
+            "AlgebraicTopology",
+        )
+        self.assertEqual(topic_from_module("Mathlib.Lean.Expr.Basic"), "Lean")
+        self.assertEqual(topic_from_module("Mathlib.Tactic.NormNum"), "Tactic")
+
+    def test_non_math_topics_fall_back_to_other(self) -> None:
+        self.assertEqual(topic_from_module("Mathlib.Util.AssertNoSorry"), "Other")
+        self.assertEqual(topic_from_module("Mathlib.Control.Basic"), "Other")
+        self.assertEqual(topic_from_module("Mathlib.Init"), "Other")
+        self.assertEqual(topic_from_module("Mathlib.Util.AssertNoSorry", "Util"), "Other")
+
+    def test_unknown_mathlib_topic_falls_back_to_other(self) -> None:
+        self.assertEqual(topic_from_module("Mathlib.Unknown.X"), "Other")
 
 
 class PipelineTests(unittest.TestCase):
