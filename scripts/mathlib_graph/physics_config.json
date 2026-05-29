@@ -40,7 +40,7 @@
   "MAX_X_DEVIATION_FRAC": 15.0,
   "__MAX_X_DEVIATION_FRAC": "max_dx = MAX_X_DEVIATION_FRAC × LAYER_GAP × BASE_SPACING  →  x ∈ [x0 - max_dx, x0 + max_dx]; 设为负值则弃用 X 钳位。钳位关闭时，初始 jitter 的参考宽度回退为 LAYER_GAP × BASE_SPACING。",
 
-  "MAX_Y_DEVIATION_FRAC": 10.0,
+  "MAX_Y_DEVIATION_FRAC": 15.0,
   "__MAX_Y_DEVIATION_FRAC": "max_dy = MAX_Y_DEVIATION_FRAC × LANE_GAP × BASE_SPACING  →  y ∈ [y0 - max_dy, y0 + max_dy]; 设为负值则弃用 Y 钳位。钳位关闭时，初始 jitter 的参考高度回退为 LANE_GAP × BASE_SPACING。",
 
   "----....": "========================== 力模拟调度 ==========================",
@@ -55,23 +55,32 @@
   "__DAMPING_START": "damping(t) = DAMPING_START + (DAMPING_END - DAMPING_START) × (t / (N-1))  线性插值; >1 = 加速, <1 = 冷却",
 
   "DAMPING_END": 0.25,
-  "__DAMPING_END": "damping(t) 在最后一步的值。pos += force × damping",
+  "__DAMPING_END": "damping(t) 在最后一步的值。velocity += force × damping；pos += velocity",
+
+  "VELOCITY_DECAY_START": 0.45,
+  "__VELOCITY_DECAY_START": "velocity_decay(t) = VELOCITY_DECAY_START + (VELOCITY_DECAY_END - VELOCITY_DECAY_START) × (t / (N-1))。每步 velocity = velocity × velocity_decay + force × damping，值越小速度耗散越强。",
+
+  "VELOCITY_DECAY_END": 0.10,
+  "__VELOCITY_DECAY_END": "velocity_decay(t) 在最后一步的值；用于逐步冷却已有速度，避免小球持续振荡。",
 
   "INITIAL_JITTER_FRAC": 0.25,
   "__INITIAL_JITTER_FRAC": "pos_init = (x0 + U(-jj, jj) × jitter_ref_x,  y0 + U(-jj, jj) × jitter_ref_y)  打破完全共线。若某轴钳位开启，jitter_ref 为该轴 max_deviation；若钳位关闭，jitter_ref 为该轴一个基础 gap。",
 
   "----.....": "========================== 锚点力 ==========================",
 
-  "ANCHOR_FORCE_STRENGTH": 1.0,
+  "ANCHOR_FORCE_STRENGTH": 2.0,
   "__ANCHOR_FORCE_STRENGTH": "F_anchor = ANCHOR_FORCE_STRENGTH × (pos0 - pos)  胡克弹簧，拉回初始坐标。该参数为无量纲刚度。",
 
   "----......": "========================== 碰撞斥力 ==========================",
 
-  "COLLISION_RADIUS": 10.0,
-  "__COLLISION_RADIUS": "气泡表面之间的额外斥力间隙 / padding (归一化到 BASE_SPACING)。effective_pair_radius = bubble_radius(u) + bubble_radius(v) + COLLISION_RADIUS × BASE_SPACING；if dist² < effective_pair_radius²:  F = COLLISION_FORCE_STRENGTH × effective_pair_radius² / dist²",
+  "COLLISION_RADIUS": 5.0,
+  "__COLLISION_RADIUS": "气泡表面之间的额外斥力间隙倍数，按小球大小缩放。effective_pair_radius = (bubble_radius(u) + bubble_radius(v)) × (1 + COLLISION_RADIUS)；if dist² < effective_pair_radius²: F = COLLISION_FORCE_STRENGTH × effective_pair_radius² / dist²",
 
-  "COLLISION_FORCE_STRENGTH": 1.0,
-  "__COLLISION_FORCE_STRENGTH": "COLLISION_FORCE_STRENGTH 是参考距离处的归一化力大小。参考距离 effective_pair_radius = bubble_radius(u) + bubble_radius(v) + COLLISION_RADIUS × BASE_SPACING；当 dist = effective_pair_radius 时，normalized_force = COLLISION_FORCE_STRENGTH，actual_force = COLLISION_FORCE_STRENGTH × BASE_SPACING。当前默认 1.0 表示在大致间隔处（算上半径和 padding）为 1 个归一化力单位。dist 更小时按 1 / normalized_dist² 增强。",
+  "COLLISION_FORCE_STRENGTH": 0.5,
+  "__COLLISION_FORCE_STRENGTH": "COLLISION_FORCE_STRENGTH 是参考距离处的归一化力大小。参考距离 effective_pair_radius = (bubble_radius(u) + bubble_radius(v)) × (1 + COLLISION_RADIUS)；当 dist = effective_pair_radius 时，normalized_force = COLLISION_FORCE_STRENGTH，actual_force = COLLISION_FORCE_STRENGTH × BASE_SPACING。dist 更小时按 1 / normalized_dist² 增强。",
+
+  "COLLISION_FORCE_CUTOFF_MULTIPLIER": 20.0,
+  "__COLLISION_FORCE_CUTOFF_MULTIPLIER": "近距离斥力最大值倍数。max_force = COLLISION_FORCE_STRENGTH × BASE_SPACING × COLLISION_FORCE_CUTOFF_MULTIPLIER；实际斥力为 min(raw_force, max_force)。设为 <= 0 则禁用最大力截断。",
 
   "----.......": "========================== 边弹簧力 ==========================",
 

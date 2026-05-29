@@ -42,10 +42,13 @@ FORCE_ITERATIONS = int(_CFG["FORCE_ITERATIONS"])
 ANCHOR_FORCE_STRENGTH = _CFG["ANCHOR_FORCE_STRENGTH"]
 COLLISION_RADIUS = _CFG["COLLISION_RADIUS"]
 COLLISION_FORCE_STRENGTH = _CFG["COLLISION_FORCE_STRENGTH"]
+COLLISION_FORCE_CUTOFF_MULTIPLIER = _CFG["COLLISION_FORCE_CUTOFF_MULTIPLIER"]
 SPRING_FORCE_STRENGTH = _CFG["SPRING_FORCE_STRENGTH"]
 INITIAL_JITTER_FRAC = _CFG["INITIAL_JITTER_FRAC"]
 DAMPING_START = _CFG["DAMPING_START"]
 DAMPING_END = _CFG["DAMPING_END"]
+VELOCITY_DECAY_START = _CFG["VELOCITY_DECAY_START"]
+VELOCITY_DECAY_END = _CFG["VELOCITY_DECAY_END"]
 BASE_SPACING = _CFG["BASE_SPACING"]
 BUBBLE_BASE_RADIUS = _CFG["BUBBLE_BASE_RADIUS"]
 BUBBLE_LOG_SCALE = _CFG["BUBBLE_LOG_SCALE"]
@@ -73,6 +76,10 @@ def _jitter_reference(max_deviation: float | None, gap: float) -> float:
 
 def _bubble_radius(descendant_count: int) -> float:
     return (BUBBLE_BASE_RADIUS + BUBBLE_LOG_SCALE * math.log1p(max(0, descendant_count))) * BASE_SPACING
+
+
+def _collision_pair_radius_scale() -> float:
+    return 1.0 + max(0.0, COLLISION_RADIUS)
 
 
 def _safe_str(value: Any) -> str:
@@ -347,14 +354,20 @@ def _force_refine(
     jitter_dy = _jitter_reference(max_dy, LANE_GAP)
 
     node_list = sorted(x0_map)
-    collision_padding = max(0.0, _sp(COLLISION_RADIUS))
+    collision_radius_scale = _collision_pair_radius_scale()
     collision_step = _normalized_step(COLLISION_FORCE_STRENGTH)
+    collision_force_max = (
+        collision_step * COLLISION_FORCE_CUTOFF_MULTIPLIER
+        if COLLISION_FORCE_CUTOFF_MULTIPLIER > 0
+        else None
+    )
     spring_step = _normalized_step(SPRING_FORCE_STRENGTH)
     collision_radii = {
-        node: bubble_radius_map.get(node, _bubble_radius(0)) + collision_padding / 2
+        node: bubble_radius_map.get(node, _bubble_radius(0)) * collision_radius_scale
         for node in node_list
     }
-    max_pair_collision_radius = max((radius * 2 for radius in collision_radii.values()), default=max(1.0, collision_padding))
+    default_collision_radius = _bubble_radius(0) * collision_radius_scale
+    max_pair_collision_radius = max((radius * 2 for radius in collision_radii.values()), default=max(1.0, default_collision_radius * 2))
     cell_size = max(1.0, max_pair_collision_radius)
     positions: dict[str, list[float]] = {
         node: [
@@ -363,9 +376,12 @@ def _force_refine(
         ]
         for node in node_list
     }
+    velocities: dict[str, list[float]] = {node: [0.0, 0.0] for node in node_list}
 
     for iteration in range(FORCE_ITERATIONS):
-        damping = DAMPING_START + (DAMPING_END - DAMPING_START) * (iteration / max(1, FORCE_ITERATIONS - 1))
+        progress = iteration / max(1, FORCE_ITERATIONS - 1)
+        damping = DAMPING_START + (DAMPING_END - DAMPING_START) * progress
+        velocity_decay = VELOCITY_DECAY_START + (VELOCITY_DECAY_END - VELOCITY_DECAY_START) * progress
         forces: dict[str, list[float]] = {node: [0.0, 0.0] for node in node_list}
 
         for node in node_list:
@@ -406,6 +422,8 @@ def _force_refine(
                         if dist_sq < pair_radius * pair_radius:
                             normalized_dist_sq = dist_sq / (pair_radius * pair_radius)
                             force = collision_step / normalized_dist_sq
+                            if collision_force_max is not None:
+                                force = min(force, collision_force_max)
                             fx = (dx / math.sqrt(dist_sq)) * force
                             fy = (dy / math.sqrt(dist_sq)) * force
                             forces[node][0] += fx
@@ -429,12 +447,31 @@ def _force_refine(
 
         for node in node_list:
             fx, fy = forces[node]
-            positions[node][0] += fx * damping
-            positions[node][1] += fy * damping
+            vx, vy = velocities[node]
+            vx = vx * velocity_decay + fx * damping
+            vy = vy * velocity_decay + fy * damping
+            positions[node][0] += vx
+            positions[node][1] += vy
             if max_dx is not None:
-                positions[node][0] = max(x0_map[node] - max_dx, min(x0_map[node] + max_dx, positions[node][0]))
+                min_x_allowed = x0_map[node] - max_dx
+                max_x_allowed = x0_map[node] + max_dx
+                if positions[node][0] < min_x_allowed:
+                    positions[node][0] = min_x_allowed
+                    vx = 0.0
+                elif positions[node][0] > max_x_allowed:
+                    positions[node][0] = max_x_allowed
+                    vx = 0.0
             if max_dy is not None:
-                positions[node][1] = max(y0_map[node] - max_dy, min(y0_map[node] + max_dy, positions[node][1]))
+                min_y_allowed = y0_map[node] - max_dy
+                max_y_allowed = y0_map[node] + max_dy
+                if positions[node][1] < min_y_allowed:
+                    positions[node][1] = min_y_allowed
+                    vy = 0.0
+                elif positions[node][1] > max_y_allowed:
+                    positions[node][1] = max_y_allowed
+                    vy = 0.0
+            velocities[node][0] = vx
+            velocities[node][1] = vy
 
     return {node: (pos[0], pos[1]) for node, pos in positions.items()}
 
@@ -518,8 +555,18 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
     max_y_deviation = _max_deviation(MAX_Y_DEVIATION_FRAC, LANE_GAP)
     jitter_x = INITIAL_JITTER_FRAC * _jitter_reference(max_x_deviation, LAYER_GAP)
     jitter_y = INITIAL_JITTER_FRAC * _jitter_reference(max_y_deviation, LANE_GAP)
-    collision_padding = max(0.0, _sp(COLLISION_RADIUS))
+    collision_pair_radius_scale = _collision_pair_radius_scale()
+    collision_force_step = _normalized_step(COLLISION_FORCE_STRENGTH)
+    collision_force_max = (
+        collision_force_step * COLLISION_FORCE_CUTOFF_MULTIPLIER
+        if COLLISION_FORCE_CUTOFF_MULTIPLIER > 0
+        else None
+    )
     max_bubble_radius = max(bubble_radius_map.values()) if bubble_radius_map else _bubble_radius(0)
+    bubble_base_radius = _sp(BUBBLE_BASE_RADIUS)
+    collision_base_pair_padding = 2 * bubble_base_radius * (collision_pair_radius_scale - 1.0)
+    collision_base_pair_radius = 2 * bubble_base_radius * collision_pair_radius_scale
+    max_collision_pair_radius = 2 * max_bubble_radius * collision_pair_radius_scale
     metrics = {
         "node_count": int(graph.number_of_nodes()),
         "edge_count": raw_edge_count,
@@ -538,8 +585,8 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
         "physics_units": {
             "normalized_spatial_values": "actual layout units = config value * base_spacing",
             "topic_bands": "topic band numbers define ordering only; spacing is controlled by LANE_GAP and TOPIC_GAP_MULTIPLIER",
-            "force_strengths": "anchor strength is dimensionless; collision and spring strengths are normalized per-iteration steps, with actual layout-unit step = config value * base_spacing",
-            "collision": "reference distance = bubble_radius(source) + bubble_radius(target) + collision_padding; at that distance normalized force equals COLLISION_FORCE_STRENGTH",
+            "force_strengths": "anchor strength is dimensionless; collision and spring strengths are normalized per-iteration steps, actual layout-unit step = config value * base_spacing, damping scales force contribution, and velocity decay dissipates stored velocity",
+            "collision": "reference distance = (bubble_radius(source) + bubble_radius(target)) * collision_pair_radius_scale; at that distance normalized force equals COLLISION_FORCE_STRENGTH; close-range force is capped by COLLISION_FORCE_CUTOFF_MULTIPLIER when enabled",
             "rendering": "frontends render with a uniform x/y scale and no display-only y compression",
         },
         "base_spacing": BASE_SPACING,
@@ -547,7 +594,7 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
         "lane_gap": _sp(LANE_GAP),
         "topic_gap_multiplier": TOPIC_GAP_MULTIPLIER,
         "topic_gap": _sp(LANE_GAP) * TOPIC_GAP_MULTIPLIER,
-        "bubble_base_radius": _sp(BUBBLE_BASE_RADIUS),
+        "bubble_base_radius": bubble_base_radius,
         "bubble_log_scale": _sp(BUBBLE_LOG_SCALE),
         "bubble_base_radius_normalized": BUBBLE_BASE_RADIUS,
         "bubble_log_scale_normalized": BUBBLE_LOG_SCALE,
@@ -555,21 +602,29 @@ def _assign_metrics(nodes: pd.DataFrame, edges: pd.DataFrame) -> tuple[pd.DataFr
         "max_y_deviation": max_y_deviation,
         "max_x_deviation_enabled": max_x_deviation is not None,
         "max_y_deviation_enabled": max_y_deviation is not None,
-        "collision_radius": collision_padding,
-        "collision_padding": collision_padding,
+        "collision_radius": collision_base_pair_radius,
+        "collision_padding": collision_base_pair_padding,
         "collision_padding_normalized": COLLISION_RADIUS,
+        "collision_pair_radius_scale": collision_pair_radius_scale,
+        "collision_base_pair_padding": collision_base_pair_padding,
+        "collision_base_pair_radius": collision_base_pair_radius,
         "max_bubble_radius": max_bubble_radius,
-        "max_collision_pair_radius": 2 * max_bubble_radius + collision_padding,
+        "max_collision_pair_radius": max_collision_pair_radius,
         "collision_force_strength": COLLISION_FORCE_STRENGTH,
-        "collision_force_step": _normalized_step(COLLISION_FORCE_STRENGTH),
+        "collision_force_step": collision_force_step,
         "collision_reference_force_normalized": COLLISION_FORCE_STRENGTH,
-        "collision_reference_force": _normalized_step(COLLISION_FORCE_STRENGTH),
+        "collision_reference_force": collision_force_step,
+        "collision_force_cutoff_multiplier": COLLISION_FORCE_CUTOFF_MULTIPLIER,
+        "collision_force_cutoff_enabled": collision_force_max is not None,
+        "collision_force_max": collision_force_max,
         "anchor_force_strength": ANCHOR_FORCE_STRENGTH,
         "spring_force_strength": SPRING_FORCE_STRENGTH,
         "spring_force_step": _normalized_step(SPRING_FORCE_STRENGTH),
         "initial_jitter_frac": INITIAL_JITTER_FRAC,
         "initial_jitter_x": jitter_x,
         "initial_jitter_y": jitter_y,
+        "velocity_decay_start": VELOCITY_DECAY_START,
+        "velocity_decay_end": VELOCITY_DECAY_END,
         "force_seed": FORCE_SEED,
         "force_iterations": FORCE_ITERATIONS,
         "top_betweenness": top_betweenness,
