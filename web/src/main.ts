@@ -397,7 +397,17 @@ loadGraph().then((payload) => {
     }
   }
 
-  const topics = [...new Set(payload.nodes.map((node) => node.topic))].sort();
+  const topicOrder = new Map<string, number>();
+  for (const topic of new Set(payload.nodes.map((node) => node.topic))) {
+    const ys = payload.nodes
+      .filter((node) => node.topic === topic)
+      .map((node) => node.y)
+      .sort((a, b) => a - b);
+    topicOrder.set(topic, ys[Math.floor(ys.length / 2)] ?? 0);
+  }
+  const topics = [...topicOrder.keys()].sort(
+    (a, b) => (topicOrder.get(a) ?? 0) - (topicOrder.get(b) ?? 0) || a.localeCompare(b)
+  );
   const topicAnchors = new Map<string, { topic: string; color: string; x: number; y: number; minX: number }>();
   for (const topic of topics) {
     const group = payload.nodes.filter((node) => node.topic === topic);

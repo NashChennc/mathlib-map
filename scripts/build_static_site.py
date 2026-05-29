@@ -384,7 +384,14 @@ HTML_TEMPLATE = """<!doctype html>
       outgoing.get(edge.source).add(edge.target);
       incoming.get(edge.target).add(edge.source);
     }
-    const topics = [...new Set(nodes.map(n => n.topic))].sort();
+    const topicOrder = new Map();
+    for (const topic of new Set(nodes.map(n => n.topic))) {
+      const ys = nodes.filter(node => node.topic === topic).map(node => node.y).sort((a, b) => a - b);
+      topicOrder.set(topic, ys[Math.floor(ys.length / 2)] ?? 0);
+    }
+    const topics = [...topicOrder.keys()].sort((a, b) =>
+      (topicOrder.get(a) ?? 0) - (topicOrder.get(b) ?? 0) || a.localeCompare(b)
+    );
     for (const topic of topics) {
       const option = document.createElement('option');
       option.value = topic;
@@ -408,7 +415,8 @@ HTML_TEMPLATE = """<!doctype html>
         minX: xs[0]
       });
     }
-    for (const [topic, color] of topicColors) {
+    for (const topic of topics) {
+      const color = topicColors.get(topic) || '#64748b';
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.innerHTML = `<span class="swatch" style="background:${color}"></span>${topic}`;

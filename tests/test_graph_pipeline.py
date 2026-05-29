@@ -10,7 +10,7 @@ import pandas as pd
 from scripts.mathlib_graph.io import filename_to_module, normalize_import
 from scripts.mathlib_graph.pipeline import build_graph_artifacts
 from scripts.mathlib_graph.source import extract_module_doc, load_mathlib_source_records, module_from_source_path, parse_imports
-from scripts.mathlib_graph.topics import topic_from_module
+from scripts.mathlib_graph.topics import band_for_topic, topic_from_module
 
 
 class IoTests(unittest.TestCase):
@@ -43,6 +43,24 @@ class TopicTests(unittest.TestCase):
 
     def test_unknown_mathlib_topic_falls_back_to_other(self) -> None:
         self.assertEqual(topic_from_module("Mathlib.Unknown.X"), "Other")
+
+    def test_topic_bands_follow_mathematical_theme_order(self) -> None:
+        theme_order = [
+            "Logic",
+            "SetTheory",
+            "CategoryTheory",
+            "Data",
+            "Algebra",
+            "NumberTheory",
+            "Geometry",
+            "Topology",
+            "Analysis",
+            "Lean",
+            "Tactic",
+            "Other",
+        ]
+        bands = [band_for_topic(topic) for topic in theme_order]
+        self.assertEqual(bands, sorted(bands))
 
 
 class PipelineTests(unittest.TestCase):
